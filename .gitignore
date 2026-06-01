@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+*.json
+
+*.data
+*.s
+
+# Exceção: manter o projeto de exemplo
+!exemplo/
+!exemplo/**
+
+.DS_Store
+Thumbs.db
