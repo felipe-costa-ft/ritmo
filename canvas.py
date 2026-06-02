@@ -1,6 +1,6 @@
 import pygame
-from config import BG_COLOR, EMPTY_TILE_BG, GRID_COLOR, SELECTION_COLOR
-from editor import EditorState, Mode, tile_index
+from config import ANIM_TILE_SIZE, BG_COLOR, EMPTY_TILE_BG, GRID_COLOR, SELECTION_COLOR, get_font
+from editor import EditorState, Mode, get_active_clip, tile_index
 
 
 def bresenham_line(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
@@ -75,7 +75,7 @@ def draw_entity_icon(
         screen.blit(spr, (x, y))
     else:
         pygame.draw.rect(screen, etype.color[:3], (x, y, w, h))
-        font = pygame.font.SysFont(None, max(10, h // 2))
+        font = get_font(max(10, h // 2))
         label = font.render(etype.name[:2].upper(), True, (255, 255, 255))
         screen.blit(label, (x + 2, y + 2))
 
@@ -189,3 +189,100 @@ def draw_canvas(
                 pygame.draw.rect(screen, SELECTION_COLOR, (hx, hy, bw, bh), 2)
             else:
                 pygame.draw.rect(screen, SELECTION_COLOR, (hx, hy, tile_w_scaled, tile_h_scaled), 2)
+
+
+def pixel_to_sheet_tile(mx: int, my: int, state: EditorState,
+                         canvas_rect: pygame.Rect) -> int | None:
+    if not state.tile_surfaces:
+        return None
+    ts = ANIM_TILE_SIZE
+    cols = max(1, canvas_rect.width // ts)
+    cx = (mx - canvas_rect.x) // ts
+    cy = (my - canvas_rect.y) // ts + state.anim_sheet_scroll
+    idx = cy * cols + cx
+    if 0 <= cx < cols and 0 <= idx < len(state.tile_surfaces):
+        return idx
+    return None
+
+
+def draw_anim_canvas(screen: pygame.Surface, state: EditorState,
+                     canvas_rect: pygame.Rect) -> None:
+    pygame.draw.rect(screen, BG_COLOR, canvas_rect)
+
+    if not state.tile_surfaces:
+        font = get_font(20)
+        s = font.render("Sem tileset carregado", True, (120, 120, 120))
+        screen.blit(s, (canvas_rect.x + 16, canvas_rect.y + 16))
+        return
+
+    ts = ANIM_TILE_SIZE
+    cols = max(1, canvas_rect.width // ts)
+    total_rows = (len(state.tile_surfaces) + cols - 1) // cols
+    visible_rows = canvas_rect.height // ts
+    max_scroll = max(0, total_rows - visible_rows)
+    state.anim_sheet_scroll = max(0, min(state.anim_sheet_scroll, max_scroll))
+
+    clip = get_active_clip(state)
+    tiles_in_clip = {f.tile_id for f in clip.frames} if clip else set()
+    active_tile = (clip.frames[state.active_anim_frame].tile_id
+                   if clip and clip.frames else -1)
+
+    for i, surf in enumerate(state.tile_surfaces):
+        dc = i % cols
+        dr = i // cols - state.anim_sheet_scroll
+        if dr < 0:
+            continue
+        if dr >= visible_rows:
+            break
+        x = canvas_rect.x + dc * ts
+        y = canvas_rect.y + dr * ts
+        pygame.draw.rect(screen, EMPTY_TILE_BG, (x, y, ts, ts))
+        scaled = pygame.transform.scale(surf, (ts, ts))
+        screen.blit(scaled, (x, y))
+        if i == active_tile:
+            pygame.draw.rect(screen, SELECTION_COLOR, (x, y, ts, ts), 3)
+        elif i in tiles_in_clip:
+            pygame.draw.rect(screen, (80, 200, 80), (x, y, ts, ts), 2)
+
+    mx, my = pygame.mouse.get_pos()
+    if canvas_rect.collidepoint(mx, my):
+        idx = pixel_to_sheet_tile(mx, my, state, canvas_rect)
+        if idx is not None:
+            dc = idx % cols
+            dr = idx // cols - state.anim_sheet_scroll
+            hx = canvas_rect.x + dc * ts
+            hy = canvas_rect.y + dr * ts
+            pygame.draw.rect(screen, (200, 200, 200), (hx, hy, ts, ts), 1)
+
+    _draw_anim_preview(screen, state, canvas_rect)
+
+
+def _draw_anim_preview(screen: pygame.Surface, state: EditorState,
+                        canvas_rect: pygame.Rect) -> None:
+    pw, ph = 160, 160
+    px = canvas_rect.right - pw - 8
+    py = canvas_rect.bottom - ph - 8
+    preview_rect = pygame.Rect(px, py, pw, ph)
+
+    pygame.draw.rect(screen, (20, 20, 20), preview_rect)
+    pygame.draw.rect(screen, (80, 80, 80), preview_rect, 1)
+
+    clip = get_active_clip(state)
+    if clip and clip.frames:
+        frame_idx = state.anim_preview_frame
+        if 0 <= frame_idx < len(clip.frames):
+            tid = clip.frames[frame_idx].tile_id
+            if 0 <= tid < len(state.tile_surfaces):
+                disp = min(pw - 16, ph - 32)
+                scaled = pygame.transform.scale(state.tile_surfaces[tid], (disp, disp))
+                screen.blit(scaled, (px + (pw - disp) // 2, py + 8))
+
+    font = get_font(14)
+    label = "▶ PLAY" if not state.anim_preview_playing else "■ STOP"
+    btn = pygame.Rect(px + pw // 2 - 30, py + ph - 22, 60, 18)
+    mx, my = pygame.mouse.get_pos()
+    btn_color = (80, 80, 80) if btn.collidepoint(mx, my) else (50, 50, 50)
+    pygame.draw.rect(screen, btn_color, btn, border_radius=3)
+    s = font.render(label, True, (200, 200, 200))
+    screen.blit(s, (btn.x + (btn.width - s.get_width()) // 2,
+                    btn.y + (btn.height - s.get_height()) // 2))

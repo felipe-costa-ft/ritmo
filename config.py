@@ -1,3 +1,5 @@
+import pygame
+
 WINDOW_W = 1280
 WINDOW_H = 720
 PANEL_W = 320
@@ -15,3 +17,15 @@ MAX_ZOOM = 8.0
 ZOOM_STEP = 0.25
 
 FPS = 60
+ANIM_TILE_SIZE = 48
+
+_font_cache: dict[int, pygame.font.Font] = {}
+
+_UNICODE_FONT = "dejavusans"
+
+
+def get_font(size: int) -> pygame.font.Font:
+    if size not in _font_cache:
+        f = pygame.font.SysFont(_UNICODE_FONT, size)
+        _font_cache[size] = f
+    return _font_cache[size]

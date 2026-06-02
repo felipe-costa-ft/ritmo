@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 from editor import EditorState, tile_index
+from anim_exporter import export_animations
 
 
 def pack_nibble(values: list[int]) -> list[int]:
@@ -106,10 +107,10 @@ def export_collision(
 
     lines.append(f"{label_prefix}_COLISAO: .byte\n")
 
-    row_order = (
+    row_order = list(
         range(state.map_rows) if y_axis == "down" else range(state.map_rows - 1, -1, -1)
     )
-    for row in row_order:
+    for i, row in enumerate(row_order):
         row_vals = [
             state.collision_layer[tile_index(col, row, state.map_cols)]
             for col in range(state.map_cols)
@@ -119,7 +120,8 @@ def export_collision(
         elif pack_mode == "2bit":
             row_vals = pack_2bit(row_vals)
         vals_str = ", ".join(str(v) for v in row_vals)
-        lines.append(f"    {vals_str}   # row {row}\n")
+        sep = "" if i == len(row_order) - 1 else ","
+        lines.append(f"    {vals_str}{sep}   # row {row}\n")
 
     path = os.path.join(output_dir, f"{label_prefix}_colisao.s")
     with open(path, "w", encoding="utf-8") as f:
@@ -133,7 +135,7 @@ def export_visual(
     use_half = (state.tileset_cols * state.tileset_rows) > 255
     directive = ".half" if use_half else ".byte"
 
-    row_order = (
+    row_order = list(
         range(state.map_rows) if y_axis == "down" else range(state.map_rows - 1, -1, -1)
     )
 
@@ -148,7 +150,8 @@ def export_visual(
                 for col in range(state.map_cols)
             ]
             vals_str = ", ".join(str(v) for v in row_vals)
-            f.write(f"    {vals_str}   # row {row_i}\n")
+            sep = "" if row_i == len(row_order) - 1 else ","
+            f.write(f"    {vals_str}{sep}   # row {row_i}\n")
     return path
 
 
@@ -167,26 +170,24 @@ def export_entities(state: EditorState, output_dir: str, label_prefix: str) -> s
 
     lines.append(
         f"# Loop de iteração:\n"
-        f"#   li   t0, 0\n"
-        f"#   li   t5, {label_prefix}_NUM_ENTIDADES\n"
-        f"# loop_ent:\n"
-        f"#   bge  t0, t5, done_ent\n"
         f"#   la   t1, {label_prefix}_ENTIDADES\n"
-        f"#   li   t2, {label_prefix}_ENTIDADE_STRIDE\n"
-        f"#   mul  t3, t0, t2\n"
-        f"#   add  t1, t1, t3\n"
-        f"#   lbu  t4, 0(t1)  # type_id\n"
-        f"#   lbu  t5, 1(t1)  # col\n"
-        f"#   lbu  t6, 2(t1)  # row\n"
-        f"#   addi t0, t0, 1\n"
+        f"#   li   t2, {label_prefix}_NUM_ENTIDADES\n"
+        f"# loop_ent:\n"
+        f"#   beqz t2, done_ent\n"
+        f"#   lbu  t3, 0(t1)  # type_id\n"
+        f"#   lbu  t4, 1(t1)  # col\n"
+        f"#   lbu  t5, 2(t1)  # row\n"
+        f"#   addi t1, t1, {stride}   # avança para próxima entidade\n"
+        f"#   addi t2, t2, -1\n"
         f"#   j    loop_ent\n"
         f"# done_ent:\n\n"
     )
 
     if sorted_entities:
         lines.append(f"{label_prefix}_ENTIDADES: {directive}\n")
-        for ent in sorted_entities:
-            lines.append(f"    {ent.type_id}, {ent.col}, {ent.row}\n")
+        for i, ent in enumerate(sorted_entities):
+            sep = "" if i == len(sorted_entities) - 1 else ","
+            lines.append(f"    {ent.type_id}, {ent.col}, {ent.row}{sep}\n")
     else:
         lines.append(f"# {label_prefix}_ENTIDADES: (nenhuma entidade definida)\n")
 
@@ -209,4 +210,6 @@ def export_all(
     paths.append(export_collision(state, output_dir, label_prefix, pack_mode, y_axis))
     paths.append(export_visual(state, output_dir, label_prefix, y_axis))
     paths.append(export_entities(state, output_dir, label_prefix))
+    if state.anim_sets:
+        paths.append(export_animations(state, output_dir, label_prefix))
     return paths

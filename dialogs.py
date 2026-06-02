@@ -1,7 +1,8 @@
 import os
 
 import pygame
-from editor import CollisionType, EntityType
+from config import get_font
+from editor import AnimClip, AnimSet, CollisionType, EntityType
 
 DIALOG_BG = (45, 45, 45)
 DIALOG_BORDER = (90, 90, 90)
@@ -34,7 +35,7 @@ PRESET_COLORS = [
 
 
 def _font(size: int = 16) -> pygame.font.Font:
-    return pygame.font.SysFont(None, size)
+    return get_font(size)
 
 
 def _text(screen, msg, x, y, size=16, color=FG):
@@ -179,7 +180,7 @@ def _open_file_dialog(
         pygame.draw.rect(screen, DIALOG_BORDER, (dx, dy, dw, dh), 1, border_radius=8)
         _text(screen, title, dx + 12, dy + 12, size=18)
 
-        path_surf = pygame.font.SysFont(None, 14).render(cwd, True, (140, 140, 140))
+        path_surf = get_font(14).render(cwd, True, (140, 140, 140))
         screen.blit(path_surf, (dx + 12, dy + 38))
         pygame.draw.line(
             screen, DIALOG_BORDER, (dx + 8, dy + 58), (dx + dw - 8, dy + 58)
@@ -196,7 +197,7 @@ def _open_file_dialog(
                 pygame.draw.rect(screen, (50, 80, 120), row_r)
             elif row_r.collidepoint(*pygame.mouse.get_pos()):
                 pygame.draw.rect(screen, (50, 50, 60), row_r)
-            prefix = "📁 " if is_dir else "   "
+            prefix = "[/] " if is_dir else "    "
             color = (180, 210, 255) if is_dir else FG
             _text(screen, prefix + name, dx + 12, iy + 4, size=15, color=color)
 
@@ -629,5 +630,104 @@ def dialog_new_entity_type(
             BTN_HOVER_OK,
         )
 
+        pygame.display.flip()
+        clock.tick(60)
+
+
+def dialog_new_anim_set(screen: pygame.Surface) -> str | None:
+    sw, sh = screen.get_size()
+    dw, dh = 360, 130
+    dx, dy = (sw - dw) // 2, (sh - dh) // 2
+    name = ""
+    clock = pygame.time.Clock()
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                elif event.key == pygame.K_RETURN:
+                    return name if name else None
+                elif event.key == pygame.K_BACKSPACE:
+                    name = name[:-1]
+                elif event.unicode.isprintable():
+                    name += event.unicode
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                if pygame.Rect(dx + dw - 90, dy + dh - 38, 78, 28).collidepoint(mx, my):
+                    return name if name else None
+        overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        screen.blit(overlay, (0, 0))
+        pygame.draw.rect(screen, DIALOG_BG, (dx, dy, dw, dh), border_radius=8)
+        pygame.draw.rect(screen, DIALOG_BORDER, (dx, dy, dw, dh), 1, border_radius=8)
+        _text(screen, "Novo AnimSet", dx + 12, dy + 12, size=18)
+        _draw_input(screen, "Nome:", name, pygame.Rect(dx + 12, dy + 48, dw - 24, 30), True)
+        _draw_button(screen, "Criar", pygame.Rect(dx + dw - 90, dy + dh - 38, 78, 28),
+                     BTN_OK, BTN_HOVER_OK)
+        pygame.display.flip()
+        clock.tick(60)
+
+
+def dialog_new_anim_clip(screen: pygame.Surface) -> tuple | None:
+    sw, sh = screen.get_size()
+    dw, dh = 360, 200
+    dx, dy = (sw - dw) // 2, (sh - dh) // 2
+    name = ""
+    delay_str = "100"
+    loop = True
+    active_field = "name"
+    clock = pygame.time.Clock()
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                elif event.key == pygame.K_RETURN:
+                    try:
+                        return (name, max(1, int(delay_str)), loop) if name else None
+                    except ValueError:
+                        pass
+                elif event.key == pygame.K_TAB:
+                    active_field = "delay" if active_field == "name" else "name"
+                elif event.key == pygame.K_BACKSPACE:
+                    if active_field == "name":
+                        name = name[:-1]
+                    else:
+                        delay_str = delay_str[:-1]
+                else:
+                    ch = event.unicode
+                    if active_field == "name" and ch.isprintable():
+                        name += ch
+                    elif active_field == "delay" and ch.isdigit():
+                        delay_str += ch
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                if pygame.Rect(dx + 12, dy + 136, 16, 16).collidepoint(mx, my):
+                    loop = not loop
+                if pygame.Rect(dx + dw - 90, dy + dh - 38, 78, 28).collidepoint(mx, my):
+                    try:
+                        return (name, max(1, int(delay_str)), loop) if name else None
+                    except ValueError:
+                        pass
+        overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        screen.blit(overlay, (0, 0))
+        pygame.draw.rect(screen, DIALOG_BG, (dx, dy, dw, dh), border_radius=8)
+        pygame.draw.rect(screen, DIALOG_BORDER, (dx, dy, dw, dh), 1, border_radius=8)
+        _text(screen, "Novo Clip", dx + 12, dy + 12, size=18)
+        _draw_input(screen, "Nome:", name,
+                    pygame.Rect(dx + 12, dy + 48, dw - 24, 30), active_field == "name")
+        _draw_input(screen, "Delay (ms):", delay_str,
+                    pygame.Rect(dx + 12, dy + 96, 120, 30), active_field == "delay")
+        loop_rect = pygame.Rect(dx + 12, dy + 136, 16, 16)
+        pygame.draw.rect(screen, (200, 200, 200) if loop else (50, 50, 50), loop_rect)
+        pygame.draw.rect(screen, DIALOG_BORDER, loop_rect, 1)
+        _text(screen, "Loop", dx + 32, dy + 137, size=15)
+        _draw_button(screen, "Criar", pygame.Rect(dx + dw - 90, dy + dh - 38, 78, 28),
+                     BTN_OK, BTN_HOVER_OK)
         pygame.display.flip()
         clock.tick(60)

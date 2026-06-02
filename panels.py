@@ -1,7 +1,8 @@
 import pygame
+from anim_panel import draw_anim_panel, handle_anim_panel_click
 from canvas import draw_entity_icon
-from config import EMPTY_TILE_BG, MIN_ZOOM, MAX_ZOOM, SELECTION_COLOR, ZOOM_STEP
-from editor import EditorState, Mode, get_entity_at, set_brush, tile_index
+from config import EMPTY_TILE_BG, MIN_ZOOM, MAX_ZOOM, SELECTION_COLOR, ZOOM_STEP, get_font
+from editor import EditorState, Mode, get_active_clip, get_entity_at, set_brush, tile_index
 
 HEADER_H = 32
 ITEM_H = 28
@@ -14,7 +15,7 @@ ACTIVE_TAB = (70, 120, 180)
 
 
 def _font(size: int = 16) -> pygame.font.Font:
-    return pygame.font.SysFont(None, size)
+    return get_font(size)
 
 
 def _text(
@@ -74,6 +75,7 @@ def draw_toolbar(
         ("Visual", Mode.VISUAL),
         ("Colisão", Mode.COLLISION),
         ("Entidades", Mode.ENTITY),
+        ("Animações", Mode.ANIMATION),
     ):
         _button(
             screen,
@@ -109,7 +111,7 @@ def handle_toolbar_click(
         x += bw + 6
 
     x += 24
-    for mode in (Mode.VISUAL, Mode.COLLISION, Mode.ENTITY):
+    for mode in (Mode.VISUAL, Mode.COLLISION, Mode.ENTITY, Mode.ANIMATION):
         if pygame.Rect(x, by, 80, bh).collidepoint(mx, my):
             state.active_mode = mode
             return None
@@ -142,6 +144,7 @@ def draw_panel(
         Mode.VISUAL: "Tileset",
         Mode.COLLISION: "Colisão",
         Mode.ENTITY: "Entidades",
+        Mode.ANIMATION: "Animações",
     }[state.active_mode]
     _text(
         screen, label, panel_rect.x + 10, panel_rect.y + (HEADER_H - 16) // 2, size=18
@@ -160,6 +163,8 @@ def draw_panel(
             draw_collision_panel(screen, state, content_rect)
         case Mode.ENTITY:
             draw_entity_panel(screen, state, content_rect)
+        case Mode.ANIMATION:
+            draw_anim_panel(screen, state, panel_rect)
 
 
 def handle_panel_click(
@@ -179,6 +184,9 @@ def handle_panel_click(
             return _handle_collision_click(state, mx, my, content_rect)
         case Mode.ENTITY:
             return _handle_entity_click(state, mx, my, content_rect)
+        case Mode.ANIMATION:
+            action = handle_anim_panel_click(state, mx, my, panel_rect)
+            return action
     return False
 
 
@@ -377,26 +385,44 @@ def draw_statusbar(
         (statusbar_rect.right, statusbar_rect.y),
     )
 
-    parts = [f"col={mouse_col} row={mouse_row}"]
+    if state.active_mode == Mode.ANIMATION:
+        parts = []
+        if state.anim_sets:
+            aset = state.anim_sets[state.active_anim_set]
+            parts.append(f"set={aset.name}")
+            clip = get_active_clip(state)
+            if clip:
+                parts.append(f"clip={clip.name}")
+                n = len(clip.frames)
+                parts.append(f"frame={state.active_anim_frame}/{n}")
+                if n > 0 and 0 <= state.active_anim_frame < n:
+                    f = clip.frames[state.active_anim_frame]
+                    parts.append(f"tile={f.tile_id}")
+                    eff = f.delay_ms if f.delay_ms > 0 else clip.default_delay_ms
+                    parts.append(f"delay={eff}ms")
+        status_text = " | ".join(parts) if parts else "modo animação — crie um set e um clip"
+    else:
+        parts = [f"col={mouse_col} row={mouse_row}"]
 
-    if 0 <= mouse_col < state.map_cols and 0 <= mouse_row < state.map_rows:
-        idx = tile_index(mouse_col, mouse_row, state.map_cols)
-        parts.append(f"tile={state.visual_layer[idx]}")
+        if 0 <= mouse_col < state.map_cols and 0 <= mouse_row < state.map_rows:
+            idx = tile_index(mouse_col, mouse_row, state.map_cols)
+            parts.append(f"tile={state.visual_layer[idx]}")
 
-        col_id = state.collision_layer[idx]
-        ct = next((c for c in state.collision_types if c.id == col_id), None)
-        parts.append(f"colisão={col_id}({ct.name if ct else '?'})")
+            col_id = state.collision_layer[idx]
+            ct = next((c for c in state.collision_types if c.id == col_id), None)
+            parts.append(f"colisão={col_id}({ct.name if ct else '?'})")
 
-        ent = get_entity_at(state, mouse_col, mouse_row)
-        if ent:
-            et = next((e for e in state.entity_types if e.id == ent.type_id), None)
-            parts.append(f"entidade={et.name if et else ent.type_id}")
-        else:
-            parts.append("entidade=—")
+            ent = get_entity_at(state, mouse_col, mouse_row)
+            if ent:
+                et = next((e for e in state.entity_types if e.id == ent.type_id), None)
+                parts.append(f"entidade={et.name if et else ent.type_id}")
+            else:
+                parts.append("entidade=—")
+        status_text = " | ".join(parts)
 
     _text(
         screen,
-        " | ".join(parts),
+        status_text,
         statusbar_rect.x + 8,
         statusbar_rect.y + (statusbar_rect.height - 14) // 2,
         size=14,

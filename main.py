@@ -1,6 +1,7 @@
 import pygame
 
-from canvas import bresenham_line, draw_canvas, screen_to_tile, tile_to_screen
+from canvas import (bresenham_line, draw_anim_canvas, draw_canvas,
+                    pixel_to_sheet_tile, screen_to_tile, tile_to_screen)
 from config import (
     FPS,
     MAX_ZOOM,
@@ -11,9 +12,12 @@ from config import (
     WINDOW_H,
     WINDOW_W,
     ZOOM_STEP,
+    get_font,
 )
 from dialogs import (
     _open_file_dialog,
+    dialog_new_anim_clip,
+    dialog_new_anim_set,
     dialog_new_collision_type,
     dialog_new_entity_type,
     dialog_new_project,
@@ -21,6 +25,9 @@ from dialogs import (
 from editor import (
     EditorState,
     Mode,
+    anim_add_clip,
+    anim_add_frame,
+    anim_add_set,
     copy_region,
     create_empty_state,
     fill_rect,
@@ -36,6 +43,7 @@ from editor import (
     stamp_brush,
     take_snapshot,
     undo,
+    update_anim_preview,
 )
 from exporter import export_all
 from importer import load_project, save_project
@@ -111,6 +119,30 @@ def check_mousebuttondown(
     mx, my = event.pos
 
     if canvas_rect.collidepoint(mx, my):
+        if state.active_mode == Mode.ANIMATION:
+            if event.button == 1:
+                idx = pixel_to_sheet_tile(mx, my, state, canvas_rect)
+                if idx is not None:
+                    anim_add_frame(state, idx)
+                else:
+                    from canvas import _draw_anim_preview
+                    pw, ph = 160, 160
+                    btn = pygame.Rect(
+                        canvas_rect.right - pw // 2 - 30 - 8,
+                        canvas_rect.bottom - ph - 8 + ph - 22,
+                        60, 18,
+                    )
+                    if btn.collidepoint(mx, my):
+                        state.anim_preview_playing = not state.anim_preview_playing
+                        state.anim_preview_t = 0.0
+                        if state.anim_preview_playing:
+                            state.anim_preview_frame = 0
+            elif event.button == 4:
+                state.anim_sheet_scroll = max(0, state.anim_sheet_scroll - 1)
+            elif event.button == 5:
+                state.anim_sheet_scroll += 1
+            return None
+
         if event.button == 2:
             mouse_state["panning"] = True
             mouse_state["pan_last"] = (mx, my)
@@ -150,8 +182,16 @@ def check_mousebuttondown(
                 mouse_state["prev_tile"] = (col, row)
 
     elif panel_rect.collidepoint(mx, my):
-        wants_dialog = handle_panel_click(state, mx, my, panel_rect)
-        if wants_dialog:
+        action = handle_panel_click(state, mx, my, panel_rect)
+        if action == "add_set":
+            name = dialog_new_anim_set(screen)
+            if name:
+                anim_add_set(state, name)
+        elif action == "add_clip":
+            result = dialog_new_anim_clip(screen)
+            if result:
+                anim_add_clip(state, result[0], result[1], result[2])
+        elif action:
             if state.active_mode == Mode.COLLISION:
                 existing = {ct.id for ct in state.collision_types}
                 new_ct = dialog_new_collision_type(screen, existing)
@@ -316,7 +356,7 @@ def _ask_string(screen: pygame.Surface, prompt: str, default: str = "") -> str |
         pygame.draw.rect(screen, (45, 45, 45), (dx, dy, dw, dh), border_radius=8)
         pygame.draw.rect(screen, (90, 90, 90), (dx, dy, dw, dh), 1, border_radius=8)
 
-        font = pygame.font.SysFont(None, 16)
+        font = get_font(16)
         screen.blit(font.render(prompt, True, (200, 200, 200)), (dx + 16, dy + 16))
 
         input_rect = pygame.Rect(dx + 16, dy + 40, dw - 32, 32)
@@ -440,7 +480,10 @@ def main() -> None:
 
         # render
         draw_toolbar(screen, editor_state, toolbar_rect)
-        draw_canvas(screen, editor_state, canvas_rect)
+        if editor_state.active_mode == Mode.ANIMATION:
+            draw_anim_canvas(screen, editor_state, canvas_rect)
+        else:
+            draw_canvas(screen, editor_state, canvas_rect)
 
         if mouse_state["sel_start"] is not None:
             mx, my = pygame.mouse.get_pos()
@@ -483,7 +526,8 @@ def main() -> None:
         draw_statusbar(screen, editor_state, status_rect, mc, mr)
 
         pygame.display.flip()
-        clock.tick(FPS)
+        dt = clock.tick(FPS)
+        update_anim_preview(editor_state, dt)
 
     pygame.quit()
 

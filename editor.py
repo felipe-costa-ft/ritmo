@@ -34,6 +34,27 @@ class Mode(Enum):
     VISUAL = 1
     COLLISION = 2
     ENTITY = 3
+    ANIMATION = 4
+
+
+@dataclass
+class AnimFrame:
+    tile_id: int
+    delay_ms: int
+
+
+@dataclass
+class AnimClip:
+    name: str
+    frames: list
+    default_delay_ms: int
+    loop: bool
+
+
+@dataclass
+class AnimSet:
+    name: str
+    clips: list
 
 
 @dataclass
@@ -81,6 +102,15 @@ class EditorState:
     clipboard_rows: int
     paste_mode: bool
 
+    anim_sets: list
+    active_anim_set: int
+    active_anim_clip: int
+    active_anim_frame: int
+    anim_preview_playing: bool
+    anim_preview_t: float
+    anim_preview_frame: int
+    anim_sheet_scroll: int
+
     undo_stack: list[tuple]
     redo_stack: list[tuple]
 
@@ -122,6 +152,14 @@ def create_empty_state(
         clipboard_cols=0,
         clipboard_rows=0,
         paste_mode=False,
+        anim_sets=[],
+        active_anim_set=0,
+        active_anim_clip=0,
+        active_anim_frame=0,
+        anim_preview_playing=False,
+        anim_preview_t=0.0,
+        anim_preview_frame=0,
+        anim_sheet_scroll=0,
         undo_stack=[],
         redo_stack=[],
     )
@@ -338,3 +376,120 @@ def redo(state: EditorState) -> None:
         state.visual_layer, state.collision_layer, state.entities = (
             state.redo_stack.pop()
         )
+
+
+def get_active_clip(state: EditorState) -> Optional[AnimClip]:
+    if not state.anim_sets:
+        return None
+    s = state.anim_sets[state.active_anim_set]
+    if not s.clips:
+        return None
+    return s.clips[state.active_anim_clip]
+
+
+def anim_add_set(state: EditorState, name: str) -> None:
+    state.anim_sets.append(AnimSet(name=name, clips=[]))
+    state.active_anim_set = len(state.anim_sets) - 1
+    state.active_anim_clip = 0
+
+
+def anim_remove_set(state: EditorState) -> None:
+    if not state.anim_sets:
+        return
+    state.anim_sets.pop(state.active_anim_set)
+    state.active_anim_set = max(0, state.active_anim_set - 1)
+    state.active_anim_clip = 0
+    state.active_anim_frame = 0
+
+
+def anim_add_clip(state: EditorState, name: str, delay_ms: int, loop: bool) -> None:
+    if not state.anim_sets:
+        return
+    s = state.anim_sets[state.active_anim_set]
+    s.clips.append(AnimClip(name=name, frames=[], default_delay_ms=delay_ms, loop=loop))
+    state.active_anim_clip = len(s.clips) - 1
+    state.active_anim_frame = 0
+
+
+def anim_remove_clip(state: EditorState) -> None:
+    clip = get_active_clip(state)
+    if clip is None:
+        return
+    s = state.anim_sets[state.active_anim_set]
+    s.clips.pop(state.active_anim_clip)
+    state.active_anim_clip = max(0, state.active_anim_clip - 1)
+    state.active_anim_frame = 0
+
+
+def anim_add_frame(state: EditorState, tile_id: int) -> None:
+    clip = get_active_clip(state)
+    if clip is None:
+        return
+    clip.frames.append(AnimFrame(tile_id=tile_id, delay_ms=0))
+    state.active_anim_frame = len(clip.frames) - 1
+
+
+def anim_remove_frame(state: EditorState, idx: int) -> None:
+    clip = get_active_clip(state)
+    if clip is None or not (0 <= idx < len(clip.frames)):
+        return
+    clip.frames.pop(idx)
+    state.active_anim_frame = max(0, min(state.active_anim_frame, len(clip.frames) - 1))
+
+
+def anim_move_frame_up(state: EditorState, idx: int) -> None:
+    clip = get_active_clip(state)
+    if clip is None or idx <= 0 or idx >= len(clip.frames):
+        return
+    clip.frames[idx - 1], clip.frames[idx] = clip.frames[idx], clip.frames[idx - 1]
+    state.active_anim_frame = idx - 1
+
+
+def anim_move_frame_down(state: EditorState, idx: int) -> None:
+    clip = get_active_clip(state)
+    if clip is None or idx < 0 or idx >= len(clip.frames) - 1:
+        return
+    clip.frames[idx], clip.frames[idx + 1] = clip.frames[idx + 1], clip.frames[idx]
+    state.active_anim_frame = idx + 1
+
+
+def anim_adjust_frame_delay(state: EditorState, idx: int, delta: int) -> None:
+    clip = get_active_clip(state)
+    if clip is None or not (0 <= idx < len(clip.frames)):
+        return
+    clip.frames[idx].delay_ms = max(0, clip.frames[idx].delay_ms + delta)
+
+
+def anim_adjust_clip_delay(state: EditorState, delta: int) -> None:
+    clip = get_active_clip(state)
+    if clip is None:
+        return
+    clip.default_delay_ms = max(1, clip.default_delay_ms + delta)
+
+
+def anim_toggle_loop(state: EditorState) -> None:
+    clip = get_active_clip(state)
+    if clip is None:
+        return
+    clip.loop = not clip.loop
+
+
+def update_anim_preview(state: EditorState, delta_ms: float) -> None:
+    clip = get_active_clip(state)
+    if not state.anim_preview_playing or clip is None or not clip.frames:
+        return
+    frame = clip.frames[state.anim_preview_frame]
+    effective = frame.delay_ms if frame.delay_ms > 0 else clip.default_delay_ms
+    effective = max(1, effective)
+    state.anim_preview_t += delta_ms
+    if state.anim_preview_t >= effective:
+        state.anim_preview_t -= effective
+        next_f = state.anim_preview_frame + 1
+        if next_f >= len(clip.frames):
+            if clip.loop:
+                state.anim_preview_frame = 0
+            else:
+                state.anim_preview_playing = False
+                state.anim_preview_frame = len(clip.frames) - 1
+        else:
+            state.anim_preview_frame = next_f
