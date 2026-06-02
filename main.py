@@ -1,6 +1,6 @@
 import pygame
 
-from canvas import bresenham_line, screen_to_tile
+from canvas import bresenham_line, draw_canvas, screen_to_tile
 from config import (
     FPS,
     MAX_ZOOM,
@@ -12,18 +12,34 @@ from config import (
     WINDOW_W,
     ZOOM_STEP,
 )
+from dialogs import (
+    _open_file_dialog,
+    dialog_new_collision_type,
+    dialog_new_entity_type,
+    dialog_new_project,
+)
 from editor import (
     EditorState,
     Mode,
     create_empty_state,
-    redo,
-    undo,
-    paint_visual,
+    load_tileset,
     paint_collision,
+    paint_visual,
     place_entity,
+    push_undo,
+    redo,
     remove_entity,
     take_snapshot,
-    push_undo,
+    undo,
+)
+from exporter import export_all
+from importer import load_project, save_project
+from panels import (
+    draw_panel,
+    draw_statusbar,
+    draw_toolbar,
+    handle_panel_click,
+    handle_toolbar_click,
 )
 
 
@@ -39,9 +55,9 @@ def check_keydown(event: pygame.event.Event, state: EditorState) -> None:
         case pygame.K_y if ctrl:
             redo(state)
         case pygame.K_s if ctrl:
-            pass  # salvar — implementar quando importer.py estiver pronto
+            pass
         case pygame.K_e if ctrl:
-            pass  # exportar — implementar quando exporter.py estiver pronto
+            pass
         case pygame.K_TAB:
             modes = list(Mode)
             current = modes.index(state.active_mode)
@@ -70,22 +86,41 @@ def check_mousebuttondown(
     panel_rect: pygame.Rect,
     toolbar_rect: pygame.Rect,
     mouse_state: dict,
-) -> None:
+    screen: pygame.Surface,
+) -> str | None:
+    """Retorna ação de toolbar ('new','open','save','export') ou None."""
     mx, my = event.pos
 
     if canvas_rect.collidepoint(mx, my):
-        mouse_state["down"] = True
-        mouse_state["snapshot_before"] = take_snapshot(state)
-        col, row = screen_to_tile(mx, my, state, canvas_rect)
-        erase = event.button == 3
-        paint_tile(state, col, row, erase)
-        mouse_state["prev_tile"] = (col, row)
+        if event.button == 2:
+            mouse_state["panning"] = True
+            mouse_state["pan_last"] = (mx, my)
+        elif event.button in (1, 3):
+            mouse_state["down"] = True
+            mouse_state["snapshot_before"] = take_snapshot(state)
+            col, row = screen_to_tile(mx, my, state, canvas_rect)
+            erase = event.button == 3
+            paint_tile(state, col, row, erase)
+            mouse_state["prev_tile"] = (col, row)
 
     elif panel_rect.collidepoint(mx, my):
-        pass  # implementar quando panels.py estiver pronto
+        wants_dialog = handle_panel_click(state, mx, my, panel_rect)
+        if wants_dialog:
+            if state.active_mode == Mode.COLLISION:
+                existing = {ct.id for ct in state.collision_types}
+                new_ct = dialog_new_collision_type(screen, existing)
+                if new_ct:
+                    state.collision_types.append(new_ct)
+            elif state.active_mode == Mode.ENTITY:
+                existing = {et.id for et in state.entity_types}
+                new_et = dialog_new_entity_type(screen, existing)
+                if new_et:
+                    state.entity_types.append(new_et)
 
     elif toolbar_rect.collidepoint(mx, my):
-        pass  # implementar quando panels.py estiver pronto
+        return handle_toolbar_click(state, mx, my, toolbar_rect)
+
+    return None
 
 
 def check_mousebuttonup(
@@ -93,7 +128,10 @@ def check_mousebuttonup(
     state: EditorState,
     mouse_state: dict,
 ) -> None:
-    if event.button in (1, 3) and mouse_state["down"]:
+    if event.button == 2:
+        mouse_state["panning"] = False
+        mouse_state["pan_last"] = None
+    elif event.button in (1, 3) and mouse_state["down"]:
         if mouse_state["snapshot_before"] is not None:
             push_undo(state, mouse_state["snapshot_before"])
         mouse_state["down"] = False
@@ -107,12 +145,20 @@ def check_mousemotion(
     canvas_rect: pygame.Rect,
     mouse_state: dict,
 ) -> None:
+    mx, my = event.pos
+
+    if mouse_state.get("panning") and mouse_state.get("pan_last"):
+        lx, ly = mouse_state["pan_last"]
+        state.camera_x -= (mx - lx) / state.zoom
+        state.camera_y -= (my - ly) / state.zoom
+        mouse_state["pan_last"] = (mx, my)
+        return
+
     if not mouse_state["down"]:
         return
     if state.active_mode == Mode.ENTITY:
         return
 
-    mx, my = event.pos
     if not canvas_rect.collidepoint(mx, my):
         return
 
@@ -139,7 +185,6 @@ def check_mousewheel(
     if not canvas_rect.collidepoint(mx, my):
         return
 
-    # ponto do mundo sob o cursor antes do zoom
     world_x = (mx - canvas_rect.x) / state.zoom + state.camera_x
     world_y = (my - canvas_rect.y) / state.zoom + state.camera_y
 
@@ -147,9 +192,98 @@ def check_mousewheel(
     new_zoom = max(MIN_ZOOM, min(MAX_ZOOM, new_zoom))
     state.zoom = new_zoom
 
-    # reposiciona câmera para manter o ponto sob o cursor
     state.camera_x = world_x - (mx - canvas_rect.x) / state.zoom
     state.camera_y = world_y - (my - canvas_rect.y) / state.zoom
+
+
+def _ask_string(screen: pygame.Surface, prompt: str, default: str = "") -> str | None:
+    sw, sh = screen.get_size()
+    dw, dh = 400, 130
+    dx, dy = (sw - dw) // 2, (sh - dh) // 2
+    value = default
+    clock = pygame.time.Clock()
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                elif event.key == pygame.K_RETURN:
+                    return value
+                elif event.key == pygame.K_BACKSPACE:
+                    value = value[:-1]
+                elif event.unicode.isprintable():
+                    value += event.unicode
+
+        overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        screen.blit(overlay, (0, 0))
+        pygame.draw.rect(screen, (45, 45, 45), (dx, dy, dw, dh), border_radius=8)
+        pygame.draw.rect(screen, (90, 90, 90), (dx, dy, dw, dh), 1, border_radius=8)
+
+        font = pygame.font.SysFont(None, 16)
+        screen.blit(font.render(prompt, True, (200, 200, 200)), (dx + 16, dy + 16))
+
+        input_rect = pygame.Rect(dx + 16, dy + 40, dw - 32, 32)
+        pygame.draw.rect(screen, (30, 30, 30), input_rect, border_radius=4)
+        pygame.draw.rect(screen, (90, 90, 90), input_rect, 1, border_radius=4)
+        cursor = "|" if (pygame.time.get_ticks() // 500) % 2 == 0 else ""
+        screen.blit(font.render(value + cursor, True, (255, 255, 255)),
+                    (input_rect.x + 6, input_rect.y + 8))
+
+        hint = font.render("Enter confirma • Esc cancela", True, (120, 120, 120))
+        screen.blit(hint, (dx + 16, dy + dh - 22))
+
+        pygame.display.flip()
+        clock.tick(60)
+
+
+def _handle_toolbar_action(
+    action: str, state: EditorState, screen: pygame.Surface
+) -> None:
+    if action == "new":
+        result = dialog_new_project(screen)
+        if result:
+            new_state = create_empty_state(
+                result["map_cols"],
+                result["map_rows"],
+                result["tile_w"],
+                result["tile_h"],
+            )
+            if result["tileset_path"]:
+                load_tileset(new_state, result["tileset_path"])
+            # substitui o estado in-place
+            state.__dict__.update(new_state.__dict__)
+
+    elif action == "open":
+        path = _open_file_dialog(screen, "Abrir projeto", ext_filter=".json")
+        if path:
+            try:
+                loaded = load_project(path)
+                state.__dict__.update(loaded.__dict__)
+            except Exception as e:
+                print(f"Erro ao abrir projeto: {e}")
+
+    elif action == "save":
+        path = _open_file_dialog(screen, "Salvar projeto", ext_filter=".json", save=True)
+        if path:
+            if not path.endswith(".json"):
+                path += ".json"
+            try:
+                save_project(state, path)
+            except Exception as e:
+                print(f"Erro ao salvar projeto: {e}")
+
+    elif action == "export":
+        out_dir = _open_file_dialog(screen, "Diretório de exportação", directory=True)
+        if out_dir:
+            prefix = _ask_string(screen, "Prefixo dos labels assembly (ex: FASE1):", "MAPA")
+            if prefix:
+                paths = export_all(state, out_dir, prefix.upper())
+                print("Exportado:")
+                for p in paths:
+                    print(" ", p)
 
 
 def main() -> None:
@@ -157,7 +291,7 @@ def main() -> None:
     screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
     pygame.display.set_caption("RITMO - RISC-V Interactive Tilemap and Map Output")
 
-    editor_state = create_empty_state(300, 300, 16, 16)
+    editor_state = create_empty_state(20, 15, 16, 16)
     clock = pygame.time.Clock()
 
     toolbar_rect = pygame.Rect(0, 0, WINDOW_W, TOOLBAR_H)
@@ -173,6 +307,8 @@ def main() -> None:
         "down": False,
         "prev_tile": None,
         "snapshot_before": None,
+        "panning": False,
+        "pan_last": None,
     }
 
     running = True
@@ -183,14 +319,17 @@ def main() -> None:
             if event.type == pygame.KEYDOWN:
                 check_keydown(event, editor_state)
             if event.type == pygame.MOUSEBUTTONDOWN:
-                check_mousebuttondown(
+                action = check_mousebuttondown(
                     event,
                     editor_state,
                     canvas_rect,
                     panel_rect,
                     toolbar_rect,
                     mouse_state,
+                    screen,
                 )
+                if action:
+                    _handle_toolbar_action(action, editor_state, screen)
             if event.type == pygame.MOUSEBUTTONUP:
                 check_mousebuttonup(event, editor_state, mouse_state)
             if event.type == pygame.MOUSEMOTION:
@@ -198,6 +337,16 @@ def main() -> None:
             if event.type == pygame.MOUSEWHEEL:
                 check_mousewheel(event, editor_state, canvas_rect)
 
+        # render
+        draw_toolbar(screen, editor_state, toolbar_rect)
+        draw_canvas(screen, editor_state, canvas_rect)
+        draw_panel(screen, editor_state, panel_rect)
+
+        mx, my = pygame.mouse.get_pos()
+        mc, mr = screen_to_tile(mx, my, editor_state, canvas_rect)
+        draw_statusbar(screen, editor_state, status_rect, mc, mr)
+
+        pygame.display.flip()
         clock.tick(FPS)
 
     pygame.quit()
