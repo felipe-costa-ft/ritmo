@@ -21,16 +21,19 @@ from dialogs import (
 from editor import (
     EditorState,
     Mode,
+    copy_region,
     create_empty_state,
     fill_rect,
     flood_fill,
     load_tileset,
     paint_collision,
     paint_visual,
+    paste_at,
     place_entity,
     push_undo,
     redo,
     remove_entity,
+    stamp_brush,
     take_snapshot,
     undo,
 )
@@ -42,6 +45,7 @@ from panels import (
     draw_toolbar,
     handle_panel_click,
     handle_toolbar_click,
+    update_brush_drag,
 )
 
 
@@ -56,10 +60,18 @@ def check_keydown(event: pygame.event.Event, state: EditorState) -> None:
                 undo(state)
         case pygame.K_y if ctrl:
             redo(state)
+        case pygame.K_c if ctrl:
+            copy_region(state)
+        case pygame.K_v if ctrl:
+            if state.clipboard_visual is not None:
+                state.paste_mode = True
         case pygame.K_s if ctrl:
             pass
         case pygame.K_e if ctrl:
             pass
+        case pygame.K_ESCAPE:
+            state.paste_mode = False
+            state.selection = None
         case pygame.K_TAB:
             modes = list(Mode)
             current = modes.index(state.active_mode)
@@ -69,7 +81,12 @@ def check_keydown(event: pygame.event.Event, state: EditorState) -> None:
 def paint_tile(state: EditorState, col: int, row: int, erase: bool) -> None:
     match state.active_mode:
         case Mode.VISUAL:
-            paint_visual(state, col, row, 0 if erase else state.selected_visual_tile)
+            if erase:
+                paint_visual(state, col, row, 0)
+            elif state.brush_cols == 1 and state.brush_rows == 1:
+                paint_visual(state, col, row, state.selected_visual_tile)
+            else:
+                stamp_brush(state, col, row)
         case Mode.COLLISION:
             paint_collision(
                 state, col, row, 0 if erase else state.selected_collision_id
@@ -102,25 +119,31 @@ def check_mousebuttondown(
             col, row = screen_to_tile(mx, my, state, canvas_rect)
             erase = event.button == 3
 
-            if (
-                mods & pygame.KMOD_CTRL
-                and not erase
-                and state.active_mode != Mode.ENTITY
-            ):
+            if state.paste_mode and event.button == 1:
                 snapshot = take_snapshot(state)
-                tile_id = (
-                    state.selected_visual_tile
-                    if state.active_mode == Mode.VISUAL
-                    else state.selected_collision_id
-                )
+                paste_at(state, col, row)
+                push_undo(state, snapshot)
+                state.paste_mode = False
+                state.selection = None
+
+            elif mods & pygame.KMOD_ALT and event.button == 1:
+                mouse_state["sel_start"] = (col, row)
+
+            elif mods & pygame.KMOD_CTRL and not erase and state.active_mode != Mode.ENTITY:
+                state.selection = None
+                snapshot = take_snapshot(state)
+                tile_id = (state.selected_visual_tile if state.active_mode == Mode.VISUAL
+                           else state.selected_collision_id)
                 flood_fill(state, col, row, tile_id)
                 push_undo(state, snapshot)
 
             elif mods & pygame.KMOD_SHIFT and state.active_mode != Mode.ENTITY:
+                state.selection = None
                 mouse_state["rect_start"] = (col, row)
                 mouse_state["snapshot_before"] = take_snapshot(state)
 
             else:
+                state.selection = None
                 mouse_state["down"] = True
                 mouse_state["snapshot_before"] = take_snapshot(state)
                 paint_tile(state, col, row, erase)
@@ -156,7 +179,24 @@ def check_mousebuttonup(
         mouse_state["panning"] = False
         mouse_state["pan_last"] = None
     elif event.button in (1, 3):
-        if mouse_state["rect_start"] is not None:
+        state.brush_drag_start = None
+
+        if mouse_state.get("sel_start") is not None and event.button == 1:
+            mx, my = event.pos
+            col, row = screen_to_tile(mx, my, state, canvas_rect)
+            c0, r0 = mouse_state["sel_start"]
+            sc = min(c0, col)
+            sr = min(r0, row)
+            scols = abs(col - c0) + 1
+            srows = abs(row - r0) + 1
+            state.selection = (
+                max(0, sc), max(0, sr),
+                min(scols, state.map_cols - max(0, sc)),
+                min(srows, state.map_rows - max(0, sr)),
+            )
+            mouse_state["sel_start"] = None
+
+        elif mouse_state["rect_start"] is not None:
             mx, my = event.pos
             col, row = screen_to_tile(mx, my, state, canvas_rect)
             c0, r0 = mouse_state["rect_start"]
@@ -186,6 +226,7 @@ def check_mousemotion(
     event: pygame.event.Event,
     state: EditorState,
     canvas_rect: pygame.Rect,
+    panel_rect: pygame.Rect,
     mouse_state: dict,
 ) -> None:
     mx, my = event.pos
@@ -195,6 +236,10 @@ def check_mousemotion(
         state.camera_x -= (mx - lx) / state.zoom
         state.camera_y -= (my - ly) / state.zoom
         mouse_state["pan_last"] = (mx, my)
+        return
+
+    if state.brush_drag_start is not None:
+        update_brush_drag(state, mx, my, panel_rect)
         return
 
     if not mouse_state["down"]:
@@ -364,6 +409,7 @@ def main() -> None:
         "panning": False,
         "pan_last": None,
         "rect_start": None,
+        "sel_start": None,
     }
 
     running = True
@@ -388,13 +434,27 @@ def main() -> None:
             if event.type == pygame.MOUSEBUTTONUP:
                 check_mousebuttonup(event, editor_state, canvas_rect, mouse_state)
             if event.type == pygame.MOUSEMOTION:
-                check_mousemotion(event, editor_state, canvas_rect, mouse_state)
+                check_mousemotion(event, editor_state, canvas_rect, panel_rect, mouse_state)
             if event.type == pygame.MOUSEWHEEL:
                 check_mousewheel(event, editor_state, canvas_rect, panel_rect)
 
         # render
         draw_toolbar(screen, editor_state, toolbar_rect)
         draw_canvas(screen, editor_state, canvas_rect)
+
+        if mouse_state["sel_start"] is not None:
+            mx, my = pygame.mouse.get_pos()
+            col, row = screen_to_tile(mx, my, editor_state, canvas_rect)
+            c0, r0 = mouse_state["sel_start"]
+            sx, sy = tile_to_screen(min(c0, col), min(r0, row), editor_state, canvas_rect)
+            ex, ey = tile_to_screen(max(c0, col) + 1, max(r0, row) + 1, editor_state, canvas_rect)
+            sx, sy, ex, ey = int(sx), int(sy), int(ex), int(ey)
+            rw, rh = ex - sx, ey - sy
+            if rw > 0 and rh > 0:
+                ov = pygame.Surface((rw, rh), pygame.SRCALPHA)
+                ov.fill((80, 160, 255, 60))
+                screen.blit(ov, (sx, sy))
+                pygame.draw.rect(screen, (80, 160, 255), (sx, sy, rw, rh), 2)
 
         if mouse_state["rect_start"] is not None:
             mx, my = pygame.mouse.get_pos()

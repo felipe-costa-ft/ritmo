@@ -138,9 +138,54 @@ def draw_canvas(
             pygame.draw.line(screen, grid_color, (left, y), (right, y))
 
     # highlight do tile sob o cursor
+    if state.selection is not None:
+        sc, sr, scols, srows = state.selection
+        sx, sy = tile_to_screen(sc, sr, state, canvas_rect)
+        ex, ey = tile_to_screen(sc + scols, sr + srows, state, canvas_rect)
+        sx, sy, ex, ey = int(sx), int(sy), int(ex), int(ey)
+        sel_surf = pygame.Surface((ex - sx, ey - sy), pygame.SRCALPHA)
+        sel_surf.fill((80, 160, 255, 50))
+        screen.blit(sel_surf, (sx, sy))
+        pygame.draw.rect(screen, (80, 160, 255), (sx, sy, ex - sx, ey - sy), 2)
+
     mx, my = pygame.mouse.get_pos()
     if canvas_rect.collidepoint(mx, my):
         hcol, hrow = screen_to_tile(mx, my, state, canvas_rect)
-        if 0 <= hcol < state.map_cols and 0 <= hrow < state.map_rows:
+        alt_held = bool(pygame.key.get_mods() & pygame.KMOD_ALT)
+
+        if state.paste_mode and state.clipboard_visual is not None:
+            for r in range(state.clipboard_rows):
+                for c in range(state.clipboard_cols):
+                    tid = state.clipboard_visual[r][c]
+                    px, py = tile_to_screen(hcol + c, hrow + r, state, canvas_rect)
+                    px, py = int(px), int(py)
+                    if 0 <= tid < len(state.tile_surfaces):
+                        s = pygame.transform.scale(state.tile_surfaces[tid], (tile_w_scaled, tile_h_scaled))
+                        tmp = pygame.Surface((tile_w_scaled, tile_h_scaled), pygame.SRCALPHA)
+                        tmp.blit(s, (0, 0))
+                        tmp.set_alpha(160)
+                        screen.blit(tmp, (px, py))
+                    pygame.draw.rect(screen, (80, 160, 255), (px, py, tile_w_scaled, tile_h_scaled), 1)
+
+        elif 0 <= hcol < state.map_cols and 0 <= hrow < state.map_rows:
             hx, hy = tile_to_screen(hcol, hrow, state, canvas_rect)
-            pygame.draw.rect(screen, SELECTION_COLOR, (int(hx), int(hy), tile_w_scaled, tile_h_scaled), 2)
+            hx, hy = int(hx), int(hy)
+
+            if alt_held:
+                pygame.draw.rect(screen, (80, 160, 255), (hx, hy, tile_w_scaled, tile_h_scaled), 2)
+            elif state.active_mode == Mode.VISUAL and state.tile_surfaces:
+                for br, tile_row in enumerate(state.brush):
+                    for bc, tid in enumerate(tile_row):
+                        px, py = tile_to_screen(hcol + bc, hrow + br, state, canvas_rect)
+                        px, py = int(px), int(py)
+                        if 0 <= tid < len(state.tile_surfaces):
+                            s = pygame.transform.scale(state.tile_surfaces[tid], (tile_w_scaled, tile_h_scaled))
+                            tmp = pygame.Surface((tile_w_scaled, tile_h_scaled), pygame.SRCALPHA)
+                            tmp.blit(s, (0, 0))
+                            tmp.set_alpha(140)
+                            screen.blit(tmp, (px, py))
+                bw = state.brush_cols * tile_w_scaled
+                bh = state.brush_rows * tile_h_scaled
+                pygame.draw.rect(screen, SELECTION_COLOR, (hx, hy, bw, bh), 2)
+            else:
+                pygame.draw.rect(screen, SELECTION_COLOR, (hx, hy, tile_w_scaled, tile_h_scaled), 2)

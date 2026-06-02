@@ -69,6 +69,18 @@ class EditorState:
 
     panel_scroll: int
 
+    brush: list[list[int]]
+    brush_cols: int
+    brush_rows: int
+    brush_drag_start: Optional[tuple[int, int]]
+
+    selection: Optional[tuple[int, int, int, int]]  # col, row, cols, rows
+    clipboard_visual: Optional[list[list[int]]]
+    clipboard_collision: Optional[list[list[int]]]
+    clipboard_cols: int
+    clipboard_rows: int
+    paste_mode: bool
+
     undo_stack: list[tuple]
     redo_stack: list[tuple]
 
@@ -100,6 +112,16 @@ def create_empty_state(
         camera_x=0,
         camera_y=0,
         panel_scroll=0,
+        brush=[[0]],
+        brush_cols=1,
+        brush_rows=1,
+        brush_drag_start=None,
+        selection=None,
+        clipboard_visual=None,
+        clipboard_collision=None,
+        clipboard_cols=0,
+        clipboard_rows=0,
+        paste_mode=False,
         undo_stack=[],
         redo_stack=[],
     )
@@ -119,6 +141,10 @@ def load_tileset(state: EditorState, path: str) -> None:
     state.tileset_path = path
     state.tile_surfaces = []
     state.panel_scroll = 0
+    state.brush = [[0]]
+    state.brush_cols = 1
+    state.brush_rows = 1
+    state.brush_drag_start = None
 
     for row in range(state.tileset_rows):
         for col in range(state.tileset_cols):
@@ -157,8 +183,9 @@ def place_entity(state: EditorState, col: int, row: int, type_id: int) -> None:
         state.entities.append(Entity(type_id=type_id, col=col, row=row))
 
 
-def fill_rect(state: EditorState, c0: int, r0: int, c1: int, r1: int,
-              tile_id: int) -> None:
+def fill_rect(
+    state: EditorState, c0: int, r0: int, c1: int, r1: int, tile_id: int
+) -> None:
     """Preenche o retângulo [c0,c1] x [r0,r1] no layer ativo."""
     col_lo, col_hi = min(c0, c1), max(c0, c1)
     row_lo, row_hi = min(r0, r1), max(r0, r1)
@@ -217,6 +244,59 @@ def flood_fill(state: EditorState, col: int, row: int, tile_id: int) -> None:
         visited.add((c, r))
         layer[idx] = tile_id
         queue.extend([(c + 1, r), (c - 1, r), (c, r + 1), (c, r - 1)])
+
+
+def set_brush(state: EditorState, grid: list[list[int]]) -> None:
+    if not grid or not grid[0]:
+        return
+    state.brush = grid
+    state.brush_rows = len(grid)
+    state.brush_cols = len(grid[0])
+    state.selected_visual_tile = grid[0][0]
+
+
+def stamp_brush(state: EditorState, col: int, row: int) -> None:
+    for r, tile_row in enumerate(state.brush):
+        for c, tid in enumerate(tile_row):
+            rc, rr = col + c, row + r
+            if 0 <= rc < state.map_cols and 0 <= rr < state.map_rows:
+                if 0 <= tid < len(state.tile_surfaces):
+                    state.visual_layer[tile_index(rc, rr, state.map_cols)] = tid
+
+
+def copy_region(state: EditorState) -> None:
+    if state.selection is None:
+        return
+    sc, sr, scols, srows = state.selection
+    state.clipboard_visual = []
+    state.clipboard_collision = []
+    for r in range(srows):
+        rv, rc = [], []
+        for c in range(scols):
+            mc, mr = sc + c, sr + r
+            if 0 <= mc < state.map_cols and 0 <= mr < state.map_rows:
+                idx = tile_index(mc, mr, state.map_cols)
+                rv.append(state.visual_layer[idx])
+                rc.append(state.collision_layer[idx])
+            else:
+                rv.append(0)
+                rc.append(0)
+        state.clipboard_visual.append(rv)
+        state.clipboard_collision.append(rc)
+    state.clipboard_cols = scols
+    state.clipboard_rows = srows
+
+
+def paste_at(state: EditorState, col: int, row: int) -> None:
+    if state.clipboard_visual is None:
+        return
+    for r in range(state.clipboard_rows):
+        for c in range(state.clipboard_cols):
+            mc, mr = col + c, row + r
+            if 0 <= mc < state.map_cols and 0 <= mr < state.map_rows:
+                idx = tile_index(mc, mr, state.map_cols)
+                state.visual_layer[idx] = state.clipboard_visual[r][c]
+                state.collision_layer[idx] = state.clipboard_collision[r][c]
 
 
 def remove_entity(state: EditorState, col: int, row: int) -> None:

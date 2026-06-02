@@ -1,7 +1,7 @@
 import pygame
 from canvas import draw_entity_icon
 from config import EMPTY_TILE_BG, MIN_ZOOM, MAX_ZOOM, SELECTION_COLOR, ZOOM_STEP
-from editor import EditorState, Mode, get_entity_at, tile_index
+from editor import EditorState, Mode, get_entity_at, set_brush, tile_index
 
 HEADER_H = 32
 ITEM_H = 28
@@ -217,12 +217,17 @@ def draw_tileset_panel(
             pygame.draw.rect(screen, EMPTY_TILE_BG, (x, y, TILE_PREVIEW, TILE_PREVIEW))
         scaled = pygame.transform.scale(surf, (TILE_PREVIEW, TILE_PREVIEW))
         screen.blit(scaled, (x, y))
-        if i == state.selected_visual_tile:
-            pygame.draw.rect(
-                screen, SELECTION_COLOR, (x, y, TILE_PREVIEW, TILE_PREVIEW), 2
-            )
+        pc = i % cols
+        pr = i // cols
+        origin = state.selected_visual_tile
+        oc = origin % cols
+        or_ = origin // cols
+        in_brush = (oc <= pc < oc + state.brush_cols and
+                    or_ <= pr < or_ + state.brush_rows)
+        if in_brush:
+            color = (100, 200, 255) if state.brush_drag_start else SELECTION_COLOR
+            pygame.draw.rect(screen, color, (x, y, TILE_PREVIEW, TILE_PREVIEW), 2)
 
-    # scrollbar
     if total_rows > visible_rows:
         bar_h = content_rect.height
         thumb_h = max(20, bar_h * visible_rows // total_rows)
@@ -231,17 +236,65 @@ def draw_tileset_panel(
         pygame.draw.rect(screen, (120, 120, 120), (content_rect.right - 6, thumb_y, 6, thumb_h))
 
 
+def pixel_to_panel_tile(
+    state: EditorState, mx: int, my: int, panel_rect: pygame.Rect
+) -> tuple[int, int] | None:
+    content_x = panel_rect.x
+    content_y = panel_rect.y + HEADER_H
+    panel_cols = max(1, panel_rect.width // TILE_PREVIEW)
+    if not (content_x <= mx < content_x + panel_cols * TILE_PREVIEW):
+        return None
+    if not (content_y <= my < panel_rect.bottom):
+        return None
+    c = (mx - content_x) // TILE_PREVIEW
+    r = (my - content_y) // TILE_PREVIEW + state.panel_scroll
+    idx = r * panel_cols + c
+    if idx >= len(state.tile_surfaces):
+        return None
+    return (c, r)
+
+
+def _build_brush_grid(
+    state: EditorState, panel_cols: int, c0: int, r0: int, c1: int, r1: int
+) -> list[list[int]]:
+    min_c, max_c = min(c0, c1), max(c0, c1)
+    min_r, max_r = min(r0, r1), max(r0, r1)
+    grid = []
+    for r in range(min_r, max_r + 1):
+        row = []
+        for c in range(min_c, max_c + 1):
+            idx = r * panel_cols + c
+            row.append(idx if idx < len(state.tile_surfaces) else 0)
+        grid.append(row)
+    return grid
+
+
+def update_brush_drag(
+    state: EditorState, mx: int, my: int, panel_rect: pygame.Rect
+) -> None:
+    if state.brush_drag_start is None:
+        return
+    pos = pixel_to_panel_tile(state, mx, my, panel_rect)
+    if pos is None:
+        return
+    panel_cols = max(1, panel_rect.width // TILE_PREVIEW)
+    c0, r0 = state.brush_drag_start
+    grid = _build_brush_grid(state, panel_cols, c0, r0, pos[0], pos[1])
+    set_brush(state, grid)
+
+
 def _handle_tileset_click(
     state: EditorState, mx: int, my: int, content_rect: pygame.Rect
 ) -> bool:
     if not state.tile_surfaces:
         return False
-    cols = max(1, content_rect.width // TILE_PREVIEW)
+    panel_cols = max(1, content_rect.width // TILE_PREVIEW)
     c = (mx - content_rect.x) // TILE_PREVIEW
     r = (my - content_rect.y) // TILE_PREVIEW + state.panel_scroll
-    idx = r * cols + c
+    idx = r * panel_cols + c
     if 0 <= idx < len(state.tile_surfaces):
-        state.selected_visual_tile = idx
+        state.brush_drag_start = (c, r)
+        set_brush(state, [[idx]])
     return False
 
 
