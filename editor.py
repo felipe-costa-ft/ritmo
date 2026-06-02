@@ -153,6 +153,68 @@ def place_entity(state: EditorState, col: int, row: int, type_id: int) -> None:
         state.entities.append(Entity(type_id=type_id, col=col, row=row))
 
 
+def fill_rect(state: EditorState, c0: int, r0: int, c1: int, r1: int,
+              tile_id: int) -> None:
+    """Preenche o retângulo [c0,c1] x [r0,r1] no layer ativo."""
+    col_lo, col_hi = min(c0, c1), max(c0, c1)
+    row_lo, row_hi = min(r0, r1), max(r0, r1)
+    col_lo = max(0, col_lo)
+    col_hi = min(state.map_cols - 1, col_hi)
+    row_lo = max(0, row_lo)
+    row_hi = min(state.map_rows - 1, row_hi)
+
+    match state.active_mode:
+        case Mode.VISUAL:
+            if not (0 <= tile_id < len(state.tile_surfaces)):
+                return
+            for r in range(row_lo, row_hi + 1):
+                for c in range(col_lo, col_hi + 1):
+                    state.visual_layer[tile_index(c, r, state.map_cols)] = tile_id
+        case Mode.COLLISION:
+            if not any(ct.id == tile_id for ct in state.collision_types):
+                return
+            for r in range(row_lo, row_hi + 1):
+                for c in range(col_lo, col_hi + 1):
+                    state.collision_layer[tile_index(c, r, state.map_cols)] = tile_id
+
+
+def flood_fill(state: EditorState, col: int, row: int, tile_id: int) -> None:
+    """BFS flood fill no layer ativo a partir de (col, row)."""
+    if not (0 <= col < state.map_cols and 0 <= row < state.map_rows):
+        return
+
+    match state.active_mode:
+        case Mode.VISUAL:
+            if not (0 <= tile_id < len(state.tile_surfaces)):
+                return
+            layer = state.visual_layer
+        case Mode.COLLISION:
+            if not any(ct.id == tile_id for ct in state.collision_types):
+                return
+            layer = state.collision_layer
+        case _:
+            return
+
+    old_val = layer[tile_index(col, row, state.map_cols)]
+    if old_val == tile_id:
+        return
+
+    queue = [(col, row)]
+    visited = set()
+    while queue:
+        c, r = queue.pop()
+        if (c, r) in visited:
+            continue
+        if not (0 <= c < state.map_cols and 0 <= r < state.map_rows):
+            continue
+        idx = tile_index(c, r, state.map_cols)
+        if layer[idx] != old_val:
+            continue
+        visited.add((c, r))
+        layer[idx] = tile_id
+        queue.extend([(c + 1, r), (c - 1, r), (c, r + 1), (c, r - 1)])
+
+
 def remove_entity(state: EditorState, col: int, row: int) -> None:
     state.entities = [e for e in state.entities if not (e.col == col and e.row == row)]
 
