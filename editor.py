@@ -67,6 +67,8 @@ class EditorState:
     camera_x: int
     camera_y: int
 
+    panel_scroll: int
+
     undo_stack: list[tuple]
     redo_stack: list[tuple]
 
@@ -97,6 +99,7 @@ def create_empty_state(
         zoom=1.0,
         camera_x=0,
         camera_y=0,
+        panel_scroll=0,
         undo_stack=[],
         redo_stack=[],
     )
@@ -115,6 +118,7 @@ def load_tileset(state: EditorState, path: str) -> None:
     state.tileset_image = image
     state.tileset_path = path
     state.tile_surfaces = []
+    state.panel_scroll = 0
 
     for row in range(state.tileset_rows):
         for col in range(state.tileset_cols):

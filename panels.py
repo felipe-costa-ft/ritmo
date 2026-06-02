@@ -196,13 +196,23 @@ def draw_tileset_panel(
         return
 
     cols = max(1, content_rect.width // TILE_PREVIEW)
+    total_rows = (len(state.tile_surfaces) + cols - 1) // cols
+    visible_rows = content_rect.height // TILE_PREVIEW
+
+    # clamp scroll
+    max_scroll = max(0, total_rows - visible_rows)
+    state.panel_scroll = max(0, min(state.panel_scroll, max_scroll))
+
     for i, surf in enumerate(state.tile_surfaces):
         c = i % cols
         r = i // cols
-        x = content_rect.x + c * TILE_PREVIEW
-        y = content_rect.y + r * TILE_PREVIEW
-        if y + TILE_PREVIEW > content_rect.bottom:
+        r_visible = r - state.panel_scroll
+        if r_visible < 0:
+            continue
+        if r_visible >= visible_rows:
             break
+        x = content_rect.x + c * TILE_PREVIEW
+        y = content_rect.y + r_visible * TILE_PREVIEW
         if i == 0:
             pygame.draw.rect(screen, EMPTY_TILE_BG, (x, y, TILE_PREVIEW, TILE_PREVIEW))
         scaled = pygame.transform.scale(surf, (TILE_PREVIEW, TILE_PREVIEW))
@@ -212,6 +222,14 @@ def draw_tileset_panel(
                 screen, SELECTION_COLOR, (x, y, TILE_PREVIEW, TILE_PREVIEW), 2
             )
 
+    # scrollbar
+    if total_rows > visible_rows:
+        bar_h = content_rect.height
+        thumb_h = max(20, bar_h * visible_rows // total_rows)
+        thumb_y = content_rect.y + (bar_h - thumb_h) * state.panel_scroll // max(1, max_scroll)
+        pygame.draw.rect(screen, (60, 60, 60), (content_rect.right - 6, content_rect.y, 6, bar_h))
+        pygame.draw.rect(screen, (120, 120, 120), (content_rect.right - 6, thumb_y, 6, thumb_h))
+
 
 def _handle_tileset_click(
     state: EditorState, mx: int, my: int, content_rect: pygame.Rect
@@ -220,7 +238,7 @@ def _handle_tileset_click(
         return False
     cols = max(1, content_rect.width // TILE_PREVIEW)
     c = (mx - content_rect.x) // TILE_PREVIEW
-    r = (my - content_rect.y) // TILE_PREVIEW
+    r = (my - content_rect.y) // TILE_PREVIEW + state.panel_scroll
     idx = r * cols + c
     if 0 <= idx < len(state.tile_surfaces):
         state.selected_visual_tile = idx

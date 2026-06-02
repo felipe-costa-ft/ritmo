@@ -162,9 +162,13 @@ def check_mousebuttonup(
             c0, r0 = mouse_state["rect_start"]
             erase = event.button == 3
             tile_id = (
-                0 if erase
-                else state.selected_visual_tile if state.active_mode == Mode.VISUAL
-                else state.selected_collision_id
+                0
+                if erase
+                else (
+                    state.selected_visual_tile
+                    if state.active_mode == Mode.VISUAL
+                    else state.selected_collision_id
+                )
             )
             fill_rect(state, c0, r0, col, row, tile_id)
             push_undo(state, mouse_state["snapshot_before"])
@@ -219,8 +223,14 @@ def check_mousewheel(
     event: pygame.event.Event,
     state: EditorState,
     canvas_rect: pygame.Rect,
+    panel_rect: pygame.Rect,
 ) -> None:
     mx, my = pygame.mouse.get_pos()
+
+    if panel_rect.collidepoint(mx, my):
+        state.panel_scroll = max(0, state.panel_scroll - event.y)
+        return
+
     if not canvas_rect.collidepoint(mx, my):
         return
 
@@ -294,7 +304,6 @@ def _handle_toolbar_action(
             )
             if result["tileset_path"]:
                 load_tileset(new_state, result["tileset_path"])
-            # substitui o estado in-place
             state.__dict__.update(new_state.__dict__)
 
     elif action == "open":
@@ -381,7 +390,7 @@ def main() -> None:
             if event.type == pygame.MOUSEMOTION:
                 check_mousemotion(event, editor_state, canvas_rect, mouse_state)
             if event.type == pygame.MOUSEWHEEL:
-                check_mousewheel(event, editor_state, canvas_rect)
+                check_mousewheel(event, editor_state, canvas_rect, panel_rect)
 
         # render
         draw_toolbar(screen, editor_state, toolbar_rect)
@@ -393,8 +402,12 @@ def main() -> None:
             c0, r0 = mouse_state["rect_start"]
             tw = int(editor_state.tile_w * editor_state.zoom)
             th = int(editor_state.tile_h * editor_state.zoom)
-            sx, sy = tile_to_screen(min(c0, col), min(r0, row), editor_state, canvas_rect)
-            ex, ey = tile_to_screen(max(c0, col) + 1, max(r0, row) + 1, editor_state, canvas_rect)
+            sx, sy = tile_to_screen(
+                min(c0, col), min(r0, row), editor_state, canvas_rect
+            )
+            ex, ey = tile_to_screen(
+                max(c0, col) + 1, max(r0, row) + 1, editor_state, canvas_rect
+            )
             sx, sy, ex, ey = int(sx), int(sy), int(ex), int(ey)
             rw, rh = ex - sx, ey - sy
             if rw > 0 and rh > 0:
