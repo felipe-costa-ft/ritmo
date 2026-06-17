@@ -89,6 +89,7 @@ class EditorState:
     camera_y: int
 
     panel_scroll: int
+    panel_scroll_x: int
 
     brush: list[list[int]]
     brush_cols: int
@@ -142,6 +143,7 @@ def create_empty_state(
         camera_x=0,
         camera_y=0,
         panel_scroll=0,
+        panel_scroll_x=0,
         brush=[[0]],
         brush_cols=1,
         brush_rows=1,
@@ -179,6 +181,7 @@ def load_tileset(state: EditorState, path: str) -> None:
     state.tileset_path = path
     state.tile_surfaces = []
     state.panel_scroll = 0
+    state.panel_scroll_x = 0
     state.brush = [[0]]
     state.brush_cols = 1
     state.brush_rows = 1

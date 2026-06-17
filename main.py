@@ -53,6 +53,7 @@ from panels import (
     draw_toolbar,
     handle_panel_click,
     handle_toolbar_click,
+    try_scrollbar_drag,
     update_brush_drag,
 )
 
@@ -182,6 +183,10 @@ def check_mousebuttondown(
                 mouse_state["prev_tile"] = (col, row)
 
     elif panel_rect.collidepoint(mx, my):
+        drag = try_scrollbar_drag(state, mx, my, panel_rect)
+        if drag is not None:
+            mouse_state["scrollbar_drag"] = drag
+            return None
         action = handle_panel_click(state, mx, my, panel_rect)
         if action == "add_set":
             name = dialog_new_anim_set(screen)
@@ -219,6 +224,7 @@ def check_mousebuttonup(
         mouse_state["panning"] = False
         mouse_state["pan_last"] = None
     elif event.button in (1, 3):
+        mouse_state["scrollbar_drag"] = None
         state.brush_drag_start = None
 
         if mouse_state.get("sel_start") is not None and event.button == 1:
@@ -271,6 +277,18 @@ def check_mousemotion(
 ) -> None:
     mx, my = event.pos
 
+    if mouse_state.get("scrollbar_drag") is not None:
+        drag = mouse_state["scrollbar_drag"]
+        if drag["axis"] == "v":
+            delta_px = my - drag["pixel_origin"]
+            new_val = drag["scroll_origin"] + int(delta_px / drag["pixels_per_unit"])
+            state.panel_scroll = max(0, new_val)
+        else:
+            delta_px = mx - drag["pixel_origin"]
+            new_val = drag["scroll_origin"] + int(delta_px / drag["pixels_per_unit"])
+            state.panel_scroll_x = max(0, new_val)
+        return
+
     if mouse_state.get("panning") and mouse_state.get("pan_last"):
         lx, ly = mouse_state["pan_last"]
         state.camera_x -= (mx - lx) / state.zoom
@@ -313,7 +331,18 @@ def check_mousewheel(
     mx, my = pygame.mouse.get_pos()
 
     if panel_rect.collidepoint(mx, my):
-        state.panel_scroll = max(0, state.panel_scroll - event.y)
+        if state.active_mode == Mode.VISUAL:
+            mods = pygame.key.get_mods()
+            if mods & pygame.KMOD_SHIFT:
+                # Shift + roda → scroll horizontal
+                state.panel_scroll_x = max(0, state.panel_scroll_x - event.y)
+            else:
+                state.panel_scroll = max(0, state.panel_scroll - event.y)
+            # Trackpad: evento horizontal (event.x) → sempre scroll horizontal
+            if event.x:
+                state.panel_scroll_x = max(0, state.panel_scroll_x + event.x)
+        else:
+            state.panel_scroll = max(0, state.panel_scroll - event.y)
         return
 
     if not canvas_rect.collidepoint(mx, my):
@@ -450,6 +479,7 @@ def main() -> None:
         "pan_last": None,
         "rect_start": None,
         "sel_start": None,
+        "scrollbar_drag": None,
     }
 
     running = True
