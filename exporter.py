@@ -197,6 +197,49 @@ def export_entities(state: EditorState, output_dir: str, label_prefix: str) -> s
     return path
 
 
+def export_tileset_offsets(
+    state: EditorState,
+    output_dir: str,
+    label_prefix: str,
+) -> str:
+    tileset_w_px = state.tileset_cols * state.tile_w
+    num_tiles = state.tileset_cols * state.tileset_rows
+
+    lines = [_header(state, label_prefix)]
+    lines.append(
+        f"# Offset (em bytes) do pixel superior-esquerdo de cada tile dentro\n"
+        f"# da imagem do tileset ({tileset_w_px}px de largura, 1 byte/pixel).\n"
+        f"# offset[i] = (i / {label_prefix}_TILESET_COLS) * {tileset_w_px} * {label_prefix}_TILE_H\n"
+        f"#           + (i % {label_prefix}_TILESET_COLS) * {label_prefix}_TILE_W\n"
+        f"#\n"
+        f"# Lookup:\n"
+        f"#   la   t1, {label_prefix}_TILESET_OFFSETS\n"
+        f"#   slli t2, a0, 2          # a0 = tile_id\n"
+        f"#   add  t1, t1, t2\n"
+        f"#   lw   t1, 0(t1)          # offset em bytes no tileset\n\n"
+    )
+    lines.append(f".eqv {label_prefix}_TILESET_COLS {state.tileset_cols}\n")
+    lines.append(f".eqv {label_prefix}_TILESET_ROWS {state.tileset_rows}\n")
+    lines.append(f".eqv {label_prefix}_NUM_TILES    {num_tiles}\n\n")
+
+    lines.append(f"{label_prefix}_TILESET_OFFSETS: .word\n")
+    per_line = 8
+    for start in range(0, num_tiles, per_line):
+        chunk = []
+        for i in range(start, min(start + per_line, num_tiles)):
+            col = i % state.tileset_cols
+            row = i // state.tileset_cols
+            chunk.append(row * tileset_w_px * state.tile_h + col * state.tile_w)
+        vals_str = ", ".join(str(v) for v in chunk)
+        sep = "" if start + per_line >= num_tiles else ","
+        lines.append(f"    {vals_str}{sep}\n")
+
+    path = os.path.join(output_dir, f"{label_prefix}_tileset_offsets.s")
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    return path
+
+
 def export_all(
     state: EditorState,
     output_dir: str,
@@ -210,6 +253,7 @@ def export_all(
     paths.append(export_collision(state, output_dir, label_prefix, pack_mode, y_axis))
     paths.append(export_visual(state, output_dir, label_prefix, y_axis))
     paths.append(export_entities(state, output_dir, label_prefix))
+    paths.append(export_tileset_offsets(state, output_dir, label_prefix))
     if state.anim_sets:
         paths.append(export_animations(state, output_dir, label_prefix))
     return paths
