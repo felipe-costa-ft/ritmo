@@ -200,6 +200,38 @@ def tile_index(col: int, row: int, map_cols: int) -> int:
     return row * map_cols + col
 
 
+def resize_map(state: EditorState, new_cols: int, new_rows: int) -> None:
+    """Redimensiona o mapa, ancorado no canto superior esquerdo (col=0, row=0).
+
+    Tiles fora dos novos limites são descartados; área nova é preenchida com 0
+    (vazio). Limpa o undo/redo pois os snapshots guardados têm o tamanho antigo.
+    """
+    old_cols, old_rows = state.map_cols, state.map_rows
+    new_visual = [0] * (new_cols * new_rows)
+    new_collision = [0] * (new_cols * new_rows)
+
+    copy_cols = min(old_cols, new_cols)
+    copy_rows = min(old_rows, new_rows)
+    for row in range(copy_rows):
+        for col in range(copy_cols):
+            new_visual[tile_index(col, row, new_cols)] = state.visual_layer[
+                tile_index(col, row, old_cols)
+            ]
+            new_collision[tile_index(col, row, new_cols)] = state.collision_layer[
+                tile_index(col, row, old_cols)
+            ]
+
+    state.map_cols = new_cols
+    state.map_rows = new_rows
+    state.visual_layer = new_visual
+    state.collision_layer = new_collision
+    state.entities = [
+        e for e in state.entities if e.col < new_cols and e.row < new_rows
+    ]
+    state.undo_stack = []
+    state.redo_stack = []
+
+
 def paint_visual(state: EditorState, col: int, row: int, tile_id: int) -> None:
     if not (0 <= tile_id < len(state.tile_surfaces)):
         return

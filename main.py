@@ -21,6 +21,7 @@ from dialogs import (
     dialog_new_collision_type,
     dialog_new_entity_type,
     dialog_new_project,
+    dialog_resize_map,
 )
 from editor import (
     EditorState,
@@ -40,6 +41,7 @@ from editor import (
     push_undo,
     redo,
     remove_entity,
+    resize_map,
     stamp_brush,
     take_snapshot,
     undo,
@@ -440,6 +442,11 @@ def _handle_toolbar_action(
                 save_project(state, path)
             except Exception as e:
                 print(f"Erro ao salvar projeto: {e}")
+
+    elif action == "resize":
+        result = dialog_resize_map(screen, state.map_cols, state.map_rows)
+        if result:
+            resize_map(state, result["map_cols"], result["map_rows"])
 
     elif action == "export":
         out_dir = _open_file_dialog(screen, "Diretório de exportação", directory=True)

@@ -331,6 +331,109 @@ def dialog_new_project(screen: pygame.Surface) -> dict | None:
     return None
 
 
+def dialog_resize_map(
+    screen: pygame.Surface, current_cols: int, current_rows: int
+) -> dict | None:
+    sw, sh = screen.get_size()
+    dw, dh = 380, 220
+    dx, dy = (sw - dw) // 2, (sh - dh) // 2
+
+    fields = {"map_cols": str(current_cols), "map_rows": str(current_rows)}
+    field_order = ["map_cols", "map_rows"]
+    labels = {"map_cols": "Colunas do mapa", "map_rows": "Linhas do mapa"}
+    active_field = field_order[0]
+    error = ""
+
+    clock = pygame.time.Clock()
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                elif event.key == pygame.K_TAB:
+                    idx = field_order.index(active_field)
+                    active_field = field_order[(idx + 1) % len(field_order)]
+                elif event.key == pygame.K_BACKSPACE:
+                    fields[active_field] = fields[active_field][:-1]
+                else:
+                    if event.unicode.isdigit():
+                        fields[active_field] += event.unicode
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+
+                for i, key in enumerate(field_order):
+                    irect = pygame.Rect(dx + 20, dy + 60 + i * 54, dw - 40, 30)
+                    if irect.collidepoint(mx, my):
+                        active_field = key
+
+                ok_rect = pygame.Rect(dx + dw - 110, dy + dh - 50, 90, 34)
+                if ok_rect.collidepoint(mx, my):
+                    try:
+                        result = {k: int(v) for k, v in fields.items()}
+                        if any(v <= 0 for v in result.values()):
+                            raise ValueError
+                        return result
+                    except ValueError:
+                        error = "Todos os campos devem ser inteiros positivos"
+
+                cancel_rect = pygame.Rect(dx + 10, dy + dh - 50, 90, 34)
+                if cancel_rect.collidepoint(mx, my):
+                    return None
+
+        overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        screen.blit(overlay, (0, 0))
+
+        pygame.draw.rect(screen, DIALOG_BG, (dx, dy, dw, dh), border_radius=8)
+        pygame.draw.rect(screen, DIALOG_BORDER, (dx, dy, dw, dh), 1, border_radius=8)
+        _text(screen, "Redimensionar Mapa", dx + 20, dy + 16, size=20)
+
+        for i, key in enumerate(field_order):
+            irect = pygame.Rect(dx + 20, dy + 60 + i * 54, dw - 40, 30)
+            _draw_input(screen, labels[key], fields[key], irect, active_field == key)
+
+        warn_y = dy + 60 + len(field_order) * 54
+        _text(
+            screen,
+            "Tiles fora dos novos limites serão descartados.",
+            dx + 20,
+            warn_y,
+            size=13,
+            color=(180, 150, 80),
+        )
+        _text(
+            screen,
+            "Isso limpa o histórico de undo/redo.",
+            dx + 20,
+            warn_y + 16,
+            size=13,
+            color=(180, 150, 80),
+        )
+
+        if error:
+            _text(screen, error, dx + 20, dy + dh - 80, size=14, color=(220, 80, 80))
+
+        _draw_button(
+            screen,
+            "Cancelar",
+            pygame.Rect(dx + 10, dy + dh - 50, 90, 34),
+            BTN_CANCEL,
+            BTN_HOVER_CANCEL,
+        )
+        _draw_button(
+            screen,
+            "Aplicar",
+            pygame.Rect(dx + dw - 110, dy + dh - 50, 90, 34),
+            BTN_OK,
+            BTN_HOVER_OK,
+        )
+
+        pygame.display.flip()
+        clock.tick(60)
+
+
 def dialog_new_collision_type(
     screen: pygame.Surface, existing_ids: set[int]
 ) -> CollisionType | None:

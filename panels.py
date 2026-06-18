@@ -64,9 +64,15 @@ def draw_toolbar(
     by = toolbar_rect.y + (toolbar_rect.height - bh) // 2
     x = toolbar_rect.x + 8
 
-    for label in ("Novo", "Abrir", "Salvar", "Exportar"):
-        _button(screen, label, pygame.Rect(x, by, bw, bh))
-        x += bw + 6
+    for label, w in (
+        ("Novo", bw),
+        ("Abrir", bw),
+        ("Salvar", bw),
+        ("Exportar", bw),
+        ("Redimensionar", 110),
+    ):
+        _button(screen, label, pygame.Rect(x, by, w, bh))
+        x += w + 6
 
     x += 12
     pygame.draw.line(screen, (80, 80, 80), (x, by), (x, by + bh))
@@ -101,15 +107,21 @@ def draw_toolbar(
 def handle_toolbar_click(
     state: EditorState, mx: int, my: int, toolbar_rect: pygame.Rect
 ) -> str | None:
-    """Retorna string de ação ('new','open','save','export') ou None."""
+    """Retorna string de ação ('new','open','save','export','resize') ou None."""
     bw, bh = 72, 30
     by = toolbar_rect.y + (toolbar_rect.height - bh) // 2
     x = toolbar_rect.x + 8
 
-    for action in ("new", "open", "save", "export"):
-        if pygame.Rect(x, by, bw, bh).collidepoint(mx, my):
+    for action, w in (
+        ("new", bw),
+        ("open", bw),
+        ("save", bw),
+        ("export", bw),
+        ("resize", 110),
+    ):
+        if pygame.Rect(x, by, w, bh).collidepoint(mx, my):
             return action
-        x += bw + 6
+        x += w + 6
 
     x += 24
     for mode in (Mode.VISUAL, Mode.COLLISION, Mode.ENTITY, Mode.ANIMATION):
