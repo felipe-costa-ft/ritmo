@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from editor import EditorState, tile_index
 from anim_exporter import export_animations
@@ -34,6 +35,16 @@ def _header(state: EditorState, label_prefix: str) -> str:
     )
 
 
+def _asm_label_part(value: str) -> str:
+    label = re.sub(r"[^0-9A-Za-z_]+", "_", value.strip().upper())
+    label = re.sub(r"_+", "_", label).strip("_")
+    if not label:
+        return "ENTITY"
+    if label[0].isdigit():
+        return f"ENTITY_{label}"
+    return label
+
+
 def export_defs(
     state: EditorState,
     output_dir: str,
@@ -52,6 +63,8 @@ def export_defs(
     lines.append(f"\n# Tipos de entidade:\n")
     for et in state.entity_types:
         lines.append(f"#   {et.id} = {et.name}\n")
+    for et in state.entity_types:
+        lines.append(f".eqv {label_prefix}_ENTITY_TYPE_{_asm_label_part(et.name)} {et.id}\n")
 
     path = os.path.join(output_dir, f"{label_prefix}_defs.s")
     with open(path, "w", encoding="utf-8") as f:
@@ -157,41 +170,118 @@ def export_visual(
 
 def export_entities(state: EditorState, output_dir: str, label_prefix: str) -> str:
     use_half = state.map_cols > 255 or state.map_rows > 255
-    stride = 5 if use_half else 3
     directive = ".half" if use_half else ".byte"
 
-    sorted_entities = sorted(state.entities, key=lambda e: (e.row, e.col))
+    entity_types = sorted(state.entity_types, key=lambda et: et.id)
+    entities_by_type = {
+        et.id: sorted(
+            (entity for entity in state.entities if entity.type_id == et.id),
+            key=lambda entity: (entity.row, entity.col),
+        )
+        for et in entity_types
+    }
+    entity_labels = {
+        et.id: f"{label_prefix}_{_asm_label_part(et.name)}" for et in entity_types
+    }
 
     lines = [_header(state, label_prefix)]
-    lines.append(f".eqv {label_prefix}_NUM_ENTIDADES  {len(sorted_entities)}\n")
-    lines.append(f".eqv {label_prefix}_ENTIDADE_STRIDE {stride}\n\n")
+    lines.append(f".eqv {label_prefix}_ENTITY_POSITION_SIZE_BYTES 2\n")
+    lines.append(
+        f".eqv {label_prefix}_NUM_ENTIDADES  "
+        f"{sum(len(entities) for entities in entities_by_type.values())}\n\n"
+    )
+
+    for et in entity_types:
+        label = entity_labels[et.id]
+        lines.append(f".eqv {label}_COUNT {len(entities_by_type[et.id])}\n")
+    if entity_types:
+        lines.append("\n")
 
     lines.append(f"# .include \"{label_prefix}_defs.s\"\n\n")
 
     lines.append(
-        f"# Loop de iteração:\n"
-        f"#   la   t1, {label_prefix}_ENTIDADES\n"
-        f"#   li   t2, {label_prefix}_NUM_ENTIDADES\n"
+        f"# Cada tabela abaixo guarda pares col,row para um tipo de entidade.\n"
+        f"# Iteração típica:\n"
+        f"#   la   t1, {label_prefix}_NOME_DA_ENTIDADE\n"
+        f"#   li   t2, {label_prefix}_NOME_DA_ENTIDADE_COUNT\n"
         f"# loop_ent:\n"
         f"#   beqz t2, done_ent\n"
-        f"#   lbu  t3, 0(t1)  # type_id\n"
-        f"#   lbu  t4, 1(t1)  # col\n"
-        f"#   lbu  t5, 2(t1)  # row\n"
-        f"#   addi t1, t1, {stride}   # avança para próxima entidade\n"
+        f"#   lbu  t3, 0(t1)  # col\n"
+        f"#   lbu  t4, 1(t1)  # row\n"
+        f"#   addi t1, t1, {label_prefix}_ENTITY_POSITION_SIZE_BYTES\n"
+        f"#   addi t2, t2, -1\n"
+        f"#   j    loop_ent\n"
+        f"# done_ent:\n\n"
+    )
+
+    if entity_types:
+        for type_i, et in enumerate(entity_types):
+            label = entity_labels[et.id]
+            entities = entities_by_type[et.id]
+            if entities:
+                lines.append(f"{label}: {directive}\n")
+                for i, ent in enumerate(entities):
+                    sep = "" if i == len(entities) - 1 else ","
+                    lines.append(f"    {ent.col}, {ent.row}{sep}\n")
+            else:
+                lines.append(f"# {label}: (nenhuma entidade definida)\n")
+            if type_i != len(entity_types) - 1:
+                lines.append("\n")
+    else:
+        lines.append(f"# Nenhum tipo de entidade definido.\n")
+
+    path = os.path.join(output_dir, f"{label_prefix}_entidades.s")
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    return path
+
+
+def export_entities_flat(state: EditorState, output_dir: str, label_prefix: str) -> str:
+    use_half = state.map_cols > 255 or state.map_rows > 255
+    directive = ".half" if use_half else ".byte"
+    sorted_entities = sorted(state.entities, key=lambda entity: (entity.row, entity.col))
+    entity_type_names = {
+        entity_type.id: _asm_label_part(entity_type.name)
+        for entity_type in state.entity_types
+    }
+
+    lines = [_header(state, label_prefix)]
+    lines.append(f".eqv {label_prefix}_FLAT_ENTITY_SIZE_BYTES 3\n")
+    lines.append(f".eqv {label_prefix}_FLAT_NUM_ENTIDADES  {len(sorted_entities)}\n")
+    lines.append(f".eqv {label_prefix}_FLAT_ENTITY_FIELD_TYPE 0\n")
+    lines.append(f".eqv {label_prefix}_FLAT_ENTITY_FIELD_COL  1\n")
+    lines.append(f".eqv {label_prefix}_FLAT_ENTITY_FIELD_ROW  2\n\n")
+
+    lines.append(f"# .include \"{label_prefix}_defs.s\"\n\n")
+    lines.append(
+        f"# Formato flat: cada entidade ocupa type,col,row.\n"
+        f"# Iteração típica:\n"
+        f"#   la   t1, {label_prefix}_ENTIDADES_FLAT\n"
+        f"#   li   t2, {label_prefix}_FLAT_NUM_ENTIDADES\n"
+        f"# loop_ent:\n"
+        f"#   beqz t2, done_ent\n"
+        f"#   lbu  t3, {label_prefix}_FLAT_ENTITY_FIELD_TYPE(t1)\n"
+        f"#   lbu  t4, {label_prefix}_FLAT_ENTITY_FIELD_COL(t1)\n"
+        f"#   lbu  t5, {label_prefix}_FLAT_ENTITY_FIELD_ROW(t1)\n"
+        f"#   addi t1, t1, {label_prefix}_FLAT_ENTITY_SIZE_BYTES\n"
         f"#   addi t2, t2, -1\n"
         f"#   j    loop_ent\n"
         f"# done_ent:\n\n"
     )
 
     if sorted_entities:
-        lines.append(f"{label_prefix}_ENTIDADES: {directive}\n")
+        lines.append(f"{label_prefix}_ENTIDADES_FLAT: {directive}\n")
         for i, ent in enumerate(sorted_entities):
             sep = "" if i == len(sorted_entities) - 1 else ","
-            lines.append(f"    {ent.type_id}, {ent.col}, {ent.row}{sep}\n")
+            type_name = entity_type_names.get(ent.type_id)
+            type_value = (
+                f"{label_prefix}_ENTITY_TYPE_{type_name}" if type_name else str(ent.type_id)
+            )
+            lines.append(f"    {type_value}, {ent.col}, {ent.row}{sep}\n")
     else:
-        lines.append(f"# {label_prefix}_ENTIDADES: (nenhuma entidade definida)\n")
+        lines.append(f"# {label_prefix}_ENTIDADES_FLAT: (nenhuma entidade definida)\n")
 
-    path = os.path.join(output_dir, f"{label_prefix}_entidades.s")
+    path = os.path.join(output_dir, f"{label_prefix}_entidades_flat.s")
     with open(path, "w", encoding="utf-8") as f:
         f.writelines(lines)
     return path
@@ -253,6 +343,7 @@ def export_all(
     paths.append(export_collision(state, output_dir, label_prefix, pack_mode, y_axis))
     paths.append(export_visual(state, output_dir, label_prefix, y_axis))
     paths.append(export_entities(state, output_dir, label_prefix))
+    paths.append(export_entities_flat(state, output_dir, label_prefix))
     paths.append(export_tileset_offsets(state, output_dir, label_prefix))
     if state.anim_sets:
         paths.append(export_animations(state, output_dir, label_prefix))
