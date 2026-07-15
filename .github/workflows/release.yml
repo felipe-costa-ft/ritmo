@@ -79,40 +79,36 @@ jobs:
   build-linux:
     name: Build Linux x64
     runs-on: ubuntu-latest
-    container: quay.io/pypa/manylinux2014_x86_64
 
     steps:
       - name: Baixar código
         uses: actions/checkout@v4
 
-      - name: Instalar dependências
+      - name: Gerar pacote Linux em manylinux2014
         run: |
-          /opt/python/cp310-cp310/bin/python -m pip install --upgrade pip
-          /opt/python/cp310-cp310/bin/python -m pip install --only-binary=:all: -r requirements.txt
-          /opt/python/cp310-cp310/bin/python -m pip install --only-binary=:all: pyinstaller
-
-      - name: Gerar executável
-        run: >-
-          /opt/python/cp310-cp310/bin/pyinstaller
-          --noconfirm
-          --clean
-          --windowed
-          --name RITMO
-          main.py
-
-      - name: Verificar compatibilidade com glibc antiga
-        run: |
-          if find dist/RITMO -type f -print0 \
-            | xargs -0 strings \
-            | grep -E 'GLIBC_2\.([3-9][8-9]|[4-9][0-9])'; then
-            echo "O pacote Linux referencia uma versao de glibc nova demais."
-            exit 1
-          fi
-
-      - name: Empacotar Linux
-        run: |
-          tar -czf RITMO-Linux-x64.tar.gz \
-            -C dist RITMO
+          docker run --rm \
+            -v "${PWD}:/workspace" \
+            -w /workspace \
+            quay.io/pypa/manylinux2014_x86_64 \
+            /bin/bash -lc '
+              set -euo pipefail
+              /opt/python/cp310-cp310/bin/python -m pip install --upgrade pip
+              /opt/python/cp310-cp310/bin/python -m pip install --only-binary=:all: -r requirements.txt
+              /opt/python/cp310-cp310/bin/python -m pip install --only-binary=:all: pyinstaller
+              /opt/python/cp310-cp310/bin/pyinstaller \
+                --noconfirm \
+                --clean \
+                --windowed \
+                --name RITMO \
+                main.py
+              if find dist/RITMO -type f -print0 \
+                | xargs -0 strings \
+                | grep -E "GLIBC_2\.([3-9][8-9]|[4-9][0-9])"; then
+                echo "O pacote Linux referencia uma versao de glibc nova demais."
+                exit 1
+              fi
+              tar -czf RITMO-Linux-x64.tar.gz -C dist RITMO
+            '
 
       - name: Preparar artefato do Linux
         uses: actions/upload-artifact@v4
