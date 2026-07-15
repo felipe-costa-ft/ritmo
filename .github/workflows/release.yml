@@ -1,0 +1,113 @@
+name: Criar release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+          - ubuntu-latest
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Gerar executável
+        run: >-
+          pyinstaller
+          --noconfirm
+          --clean
+          --windowed
+          --name RITMO
+          main.py
+
+      - name: Empacotar Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path dist/RITMO `
+            -DestinationPath RITMO-Windows-x64.zip
+
+      - name: Empacotar macOS
+        if: runner.os == 'macOS'
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/RITMO.app \
+            RITMO-macOS.zip
+
+      - name: Empacotar Linux
+        if: runner.os == 'Linux'
+        run: |
+          tar -czf RITMO-Linux-x64.tar.gz \
+            -C dist RITMO
+
+      - name: Preparar artefato do Windows
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: RITMO-Windows-x64.zip
+          if-no-files-found: error
+
+      - name: Preparar artefato do macOS
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: RITMO-macOS.zip
+          if-no-files-found: error
+
+      - name: Preparar artefato do Linux
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: RITMO-Linux-x64.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publicar release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar executáveis
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Criar release no GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            release-assets/* \
+            --title "RITMO ${GITHUB_REF_NAME}" \
+            --generate-notes
