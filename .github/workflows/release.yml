@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-desktop:
     name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
 
@@ -19,7 +19,6 @@ jobs:
         os:
           - windows-latest
           - macos-latest
-          - ubuntu-latest
 
     steps:
       - name: Baixar código
@@ -28,7 +27,7 @@ jobs:
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.12"
           cache: pip
 
       - name: Instalar dependências
@@ -61,12 +60,6 @@ jobs:
             dist/RITMO.app \
             RITMO-macOS.zip
 
-      - name: Empacotar Linux
-        if: runner.os == 'Linux'
-        run: |
-          tar -czf RITMO-Linux-x64.tar.gz \
-            -C dist RITMO
-
       - name: Preparar artefato do Windows
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -83,8 +76,45 @@ jobs:
           path: RITMO-macOS.zip
           if-no-files-found: error
 
+  build-linux:
+    name: Build Linux x64
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux2014_x86_64
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Instalar dependências
+        run: |
+          /opt/python/cp310-cp310/bin/python -m pip install --upgrade pip
+          /opt/python/cp310-cp310/bin/python -m pip install --only-binary=:all: -r requirements.txt
+          /opt/python/cp310-cp310/bin/python -m pip install --only-binary=:all: pyinstaller
+
+      - name: Gerar executável
+        run: >-
+          /opt/python/cp310-cp310/bin/pyinstaller
+          --noconfirm
+          --clean
+          --windowed
+          --name RITMO
+          main.py
+
+      - name: Verificar compatibilidade com glibc antiga
+        run: |
+          if find dist/RITMO -type f -print0 \
+            | xargs -0 strings \
+            | grep -E 'GLIBC_2\.([3-9][8-9]|[4-9][0-9])'; then
+            echo "O pacote Linux referencia uma versao de glibc nova demais."
+            exit 1
+          fi
+
+      - name: Empacotar Linux
+        run: |
+          tar -czf RITMO-Linux-x64.tar.gz \
+            -C dist RITMO
+
       - name: Preparar artefato do Linux
-        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: release-linux
@@ -93,7 +123,9 @@ jobs:
 
   release:
     name: Publicar release
-    needs: build
+    needs:
+      - build-desktop
+      - build-linux
     runs-on: ubuntu-latest
 
     steps:
