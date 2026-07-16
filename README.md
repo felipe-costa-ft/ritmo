@@ -256,3 +256,9 @@ ritmo/
 O principal exemplo de integração é o clone de Mega Man 2 em Assembly RISC-V que motivou a criação do editor:
 
 [felipe-costa-ft/MegaManRISCV](https://github.com/felipe-costa-ft/MegaManRISCV)
+
+## Licença
+
+O código-fonte do RITMO é distribuído sob a [licença MIT](LICENSE).
+
+A licença não se aplica a marcas, personagens, imagens, músicas ou outros recursos de terceiros. Esses materiais permanecem propriedade de seus respectivos titulares.
