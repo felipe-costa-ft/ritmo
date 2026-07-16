@@ -8,6 +8,12 @@ Em vez de armazenar cada cenário como uma imagem completa na seção de dados, 
 
 > Repositório de exemplo: [felipe-costa-ft/MegaManRISCV](https://github.com/felipe-costa-ft/MegaManRISCV)
 
+## Tutorial em vídeo
+
+Um tutorial de utilização do RITMO está disponível no YouTube:
+
+[Como usar o RITMO](https://www.youtube.com/watch?v=krWMkNkizWI)
+
 ## Funcionalidades
 
 - edição da camada visual com um ou vários tiles por pincel;
